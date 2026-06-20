@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { fetchJobs, fetchStats, createJob, updateJob, deleteJob, listContacts, deleteContact } from '../lib/api';
+import { fetchJobs, fetchStats, createJob, updateJob, deleteJob, listContacts, deleteContact, fetchActivity, changePassword } from '../lib/api';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Textarea } from '../components/ui/textarea';
@@ -10,7 +10,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Switch } from '../components/ui/switch';
-import { LogOut, Plus, Pencil, Trash2, Briefcase, BarChart3, Mail, Users, FileText, Search } from 'lucide-react';
+import { Badge } from '../components/ui/badge';
+import { LogOut, Plus, Pencil, Trash2, Briefcase, BarChart3, Mail, FileText, Search, Shield, KeyRound, Check, XCircle } from 'lucide-react';
 import { toast } from '../hooks/use-toast';
 
 const CATS = ['govt', 'private', 'defence', 'banking', 'railway', 'teaching', 'police'];
@@ -30,23 +31,36 @@ const AdminDashboard = () => {
   const [stats, setStats] = useState(null);
   const [jobs, setJobs] = useState([]);
   const [contacts, setContacts] = useState([]);
+  const [activity, setActivity] = useState([]);
   const [search, setSearch] = useState('');
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(emptyJob);
+  const [pwdOpen, setPwdOpen] = useState(false);
+  const [pwdForm, setPwdForm] = useState({ old: '', new1: '', new2: '' });
+  const [pwdErr, setPwdErr] = useState('');
 
   useEffect(() => {
-    if (!authLoading && !user) nav('/admin/login');
+    if (!authLoading) {
+      if (!user) { nav('/admin/login'); return; }
+      if (user.must_reset) { nav('/admin/login'); return; }
+    }
   }, [user, authLoading, nav]);
 
   const refresh = () => {
-    fetchStats().then(setStats);
-    fetchJobs({ limit: 200, search: search || undefined }).then(r => setJobs(r.jobs || []));
-    listContacts().then(setContacts).catch(() => {});
+    fetchStats().then(setStats).catch(()=>{});
+    fetchJobs({ limit: 200, search: search || undefined }).then(r => setJobs(r.jobs || [])).catch(()=>{});
+    listContacts().then(setContacts).catch(()=>{});
+    fetchActivity().then(setActivity).catch(()=>{});
   };
 
-  useEffect(() => { if (user) refresh(); }, [user]);
-  useEffect(() => { if (user) { const t = setTimeout(() => fetchJobs({ limit: 200, search: search || undefined }).then(r => setJobs(r.jobs || [])), 300); return () => clearTimeout(t); } }, [search, user]);
+  useEffect(() => { if (user && !user.must_reset) refresh(); /* eslint-disable-next-line */ }, [user]);
+  useEffect(() => {
+    if (user && !user.must_reset) {
+      const t = setTimeout(() => fetchJobs({ limit: 200, search: search || undefined }).then(r => setJobs(r.jobs || [])).catch(()=>{}), 300);
+      return () => clearTimeout(t);
+    }
+  }, [search, user]);
 
   const openNew = () => { setEditing(null); setForm(emptyJob); setOpen(true); };
   const openEdit = (j) => { setEditing(j); setForm({ ...emptyJob, ...j }); setOpen(true); };
@@ -66,15 +80,19 @@ const AdminDashboard = () => {
       setOpen(false);
       refresh();
     } catch (e) {
-      toast({ title: 'Save failed', description: String(e?.message || e) });
+      toast({ title: 'Save failed', description: String(e?.response?.data?.detail || e?.message || e) });
     }
   };
 
   const remove = async (j) => {
     if (!window.confirm(`Delete "${j.title}"?`)) return;
-    await deleteJob(j.id);
-    toast({ title: 'Deleted' });
-    refresh();
+    try {
+      await deleteJob(j.id);
+      toast({ title: 'Deleted' });
+      refresh();
+    } catch (e) {
+      toast({ title: 'Delete failed', description: String(e?.response?.data?.detail || e?.message) });
+    }
   };
 
   const removeContact = async (c) => {
@@ -83,18 +101,37 @@ const AdminDashboard = () => {
     refresh();
   };
 
+  const submitPasswordChange = async (e) => {
+    e.preventDefault();
+    setPwdErr('');
+    if (pwdForm.new1.length < 8) { setPwdErr('New password must be at least 8 characters.'); return; }
+    if (pwdForm.new1 !== pwdForm.new2) { setPwdErr('Passwords do not match.'); return; }
+    try {
+      const res = await changePassword({ old_password: pwdForm.old, new_password: pwdForm.new1 });
+      if (res?.token) localStorage.setItem('av_admin_token', res.token);
+      toast({ title: 'Password updated' });
+      setPwdOpen(false);
+      setPwdForm({ old: '', new1: '', new2: '' });
+    } catch (err) {
+      setPwdErr(err?.response?.data?.detail || 'Update failed');
+    }
+  };
+
   if (authLoading) return <div className="text-center py-20">Loading...</div>;
-  if (!user) return null;
+  if (!user || user.must_reset) return null;
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
         <div>
           <h1 className="text-2xl font-extrabold text-purple-900 title-font">Admin Dashboard</h1>
           <p className="text-sm text-gray-600">Welcome back, {user.username}</p>
         </div>
-        <div className="flex items-center gap-2">
-          <Link to="/" className="text-sm text-purple-700 hover:underline">View Site</Link>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Link to="/" className="text-sm text-purple-700 hover:underline px-2">View Site</Link>
+          <Button variant="outline" onClick={()=>setPwdOpen(true)} className="border-purple-300">
+            <KeyRound className="w-4 h-4 mr-1" /> Change Password
+          </Button>
           <Button variant="outline" onClick={() => { logout(); nav('/admin/login'); }} className="border-purple-300">
             <LogOut className="w-4 h-4 mr-1" /> Logout
           </Button>
@@ -111,10 +148,11 @@ const AdminDashboard = () => {
       )}
 
       <Tabs defaultValue="jobs">
-        <TabsList className="bg-purple-100">
+        <TabsList className="bg-purple-100 flex flex-wrap h-auto">
           <TabsTrigger value="jobs">Jobs</TabsTrigger>
           <TabsTrigger value="messages">Messages</TabsTrigger>
           <TabsTrigger value="analytics">Analytics</TabsTrigger>
+          <TabsTrigger value="activity"><Shield className="w-3.5 h-3.5 mr-1" /> Activity Log</TabsTrigger>
         </TabsList>
 
         <TabsContent value="jobs" className="mt-4">
@@ -126,8 +164,8 @@ const AdminDashboard = () => {
               </div>
               <Button onClick={openNew} className="bg-purple-700 hover:bg-purple-800"><Plus className="w-4 h-4 mr-1" /> Add Job</Button>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+            <div className="overflow-x-auto -mx-4 sm:mx-0">
+              <table className="w-full text-sm min-w-[700px]">
                 <thead className="bg-purple-50 text-purple-900">
                   <tr>
                     <th className="text-left px-3 py-2">Title</th>
@@ -142,14 +180,14 @@ const AdminDashboard = () => {
                   {jobs.map(j => (
                     <tr key={j.id} className="border-b border-purple-50 hover:bg-purple-50/40">
                       <td className="px-3 py-2 max-w-md truncate">
-                        {j.is_featured && <span className="text-purple-700 mr-1">★</span>}
+                        {j.is_featured && <span className="text-purple-700 mr-1" title="Featured">★</span>}
                         {j.title}
                       </td>
                       <td className="px-3 py-2 capitalize">{j.category}</td>
-                      <td className="px-3 py-2 capitalize">{j.job_type?.replace('_',' ')}</td>
+                      <td className="px-3 py-2 capitalize">{(j.job_type||'').replace('_',' ')}</td>
                       <td className="px-3 py-2">{j.last_date || '—'}</td>
                       <td className="px-3 py-2">{j.views || 0}</td>
-                      <td className="px-3 py-2 text-right">
+                      <td className="px-3 py-2 text-right whitespace-nowrap">
                         <Button size="sm" variant="outline" onClick={()=>openEdit(j)} className="mr-1 border-purple-300"><Pencil className="w-3.5 h-3.5" /></Button>
                         <Button size="sm" variant="outline" onClick={()=>remove(j)} className="text-red-600 border-red-200 hover:bg-red-50"><Trash2 className="w-3.5 h-3.5" /></Button>
                       </td>
@@ -168,12 +206,12 @@ const AdminDashboard = () => {
             <div className="space-y-3">
               {contacts.map(c => (
                 <div key={c.id} className="border border-purple-100 rounded-lg p-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="font-semibold text-purple-900">{c.name} <span className="text-xs text-gray-500">&lt;{c.email}&gt;</span></div>
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="font-semibold text-purple-900 truncate">{c.name} <span className="text-xs text-gray-500">&lt;{c.email}&gt;</span></div>
                       <div className="text-xs text-gray-500">{c.subject || '(no subject)'} • {new Date(c.created_at).toLocaleString()}</div>
                     </div>
-                    <Button size="sm" variant="outline" onClick={()=>removeContact(c)} className="text-red-600 border-red-200"><Trash2 className="w-3.5 h-3.5" /></Button>
+                    <Button size="sm" variant="outline" onClick={()=>removeContact(c)} className="text-red-600 border-red-200 self-start sm:self-auto"><Trash2 className="w-3.5 h-3.5" /></Button>
                   </div>
                   <p className="text-sm text-gray-700 mt-2 whitespace-pre-line">{c.message}</p>
                 </div>
@@ -204,6 +242,44 @@ const AdminDashboard = () => {
               </div>
             </div>
           )}
+        </TabsContent>
+
+        <TabsContent value="activity" className="mt-4">
+          <div className="bg-white rounded-xl border border-purple-100 p-4">
+            <h3 className="font-semibold text-purple-900 mb-1 flex items-center gap-2"><Shield className="w-4 h-4" /> Login Activity</h3>
+            <p className="text-xs text-gray-500 mb-4">Last {activity.length} login attempts. Failed attempts &amp; account lockouts are tracked here.</p>
+            <div className="overflow-x-auto -mx-4 sm:mx-0">
+              <table className="w-full text-sm min-w-[640px]">
+                <thead className="bg-purple-50 text-purple-900">
+                  <tr>
+                    <th className="text-left px-3 py-2">Time</th>
+                    <th className="text-left px-3 py-2">Username</th>
+                    <th className="text-left px-3 py-2">IP Address</th>
+                    <th className="text-left px-3 py-2">Status</th>
+                    <th className="text-left px-3 py-2">Reason</th>
+                    <th className="text-left px-3 py-2">Browser</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {activity.map(a => (
+                    <tr key={a.id} className="border-b border-purple-50">
+                      <td className="px-3 py-2 whitespace-nowrap text-xs">{new Date(a.timestamp).toLocaleString()}</td>
+                      <td className="px-3 py-2 font-medium">{a.username}</td>
+                      <td className="px-3 py-2 font-mono text-xs">{a.ip}</td>
+                      <td className="px-3 py-2">
+                        {a.success
+                          ? <Badge className="bg-emerald-100 text-emerald-800 border-0"><Check className="w-3 h-3 mr-1" />Success</Badge>
+                          : <Badge className="bg-red-100 text-red-800 border-0"><XCircle className="w-3 h-3 mr-1" />Failed</Badge>}
+                      </td>
+                      <td className="px-3 py-2 text-xs text-gray-700">{(a.reason||'').replace(/_/g,' ')}</td>
+                      <td className="px-3 py-2 text-xs text-gray-500 max-w-[260px] truncate">{a.user_agent}</td>
+                    </tr>
+                  ))}
+                  {activity.length === 0 && <tr><td colSpan={6} className="text-center py-6 text-gray-500">No login activity yet</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </TabsContent>
       </Tabs>
 
@@ -253,16 +329,43 @@ const AdminDashboard = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={pwdOpen} onOpenChange={setPwdOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Change Password</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={submitPasswordChange} className="space-y-3">
+            <div>
+              <Label htmlFor="oldp">Current Password</Label>
+              <Input id="oldp" type="password" value={pwdForm.old} onChange={e=>setPwdForm({...pwdForm, old: e.target.value})} className="mt-1" />
+            </div>
+            <div>
+              <Label htmlFor="new1">New Password</Label>
+              <Input id="new1" type="password" value={pwdForm.new1} onChange={e=>setPwdForm({...pwdForm, new1: e.target.value})} className="mt-1" placeholder="At least 8 characters" />
+            </div>
+            <div>
+              <Label htmlFor="new2">Confirm New Password</Label>
+              <Input id="new2" type="password" value={pwdForm.new2} onChange={e=>setPwdForm({...pwdForm, new2: e.target.value})} className="mt-1" />
+            </div>
+            {pwdErr && <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded p-2">{pwdErr}</div>}
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={()=>setPwdOpen(false)}>Cancel</Button>
+              <Button type="submit" className="bg-purple-700 hover:bg-purple-800">Update</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
 
 const StatCard = ({ icon: Icon, label, value }) => (
   <div className="bg-white rounded-xl border border-purple-100 p-4 flex items-center gap-3">
-    <div className="w-11 h-11 rounded-lg bg-purple-100 text-purple-700 flex items-center justify-center"><Icon className="w-5 h-5" /></div>
-    <div>
+    <div className="w-11 h-11 rounded-lg bg-purple-100 text-purple-700 flex items-center justify-center flex-shrink-0"><Icon className="w-5 h-5" /></div>
+    <div className="min-w-0">
       <div className="text-2xl font-extrabold text-purple-900">{value}</div>
-      <div className="text-xs text-gray-600 uppercase tracking-wide">{label}</div>
+      <div className="text-xs text-gray-600 uppercase tracking-wide truncate">{label}</div>
     </div>
   </div>
 );
