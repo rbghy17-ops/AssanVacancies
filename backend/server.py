@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, status
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -24,11 +24,24 @@ db = client[os.environ['DB_NAME']]
 
 JWT_SECRET = os.environ.get('JWT_SECRET', 'assamvacancies-secret-key-2025-change-me')
 JWT_ALGO = 'HS256'
-TOKEN_TTL_MIN = 30  # 30-minute idle timeout
+TOKEN_TTL_MIN = 30
 MAX_FAILED_ATTEMPTS = 5
 LOCKOUT_MIN = 15
 BOOTSTRAP_USERNAME = 'admin'
-BOOTSTRAP_PASSWORD = 'admin'  # one-time bootstrap; force-reset on first login
+BOOTSTRAP_PASSWORD = 'admin'
+
+# Assam districts (35 total as of 2025)
+DISTRICTS = [
+    "Bajali", "Baksa", "Barpeta", "Biswanath", "Bongaigaon", "Cachar",
+    "Charaideo", "Chirang", "Darrang", "Dhemaji", "Dhubri", "Dibrugarh",
+    "Dima Hasao", "Goalpara", "Golaghat", "Hailakandi", "Hojai", "Jorhat",
+    "Kamrup", "Kamrup Metropolitan", "Karbi Anglong", "Karimganj",
+    "Kokrajhar", "Lakhimpur", "Majuli", "Morigaon", "Nagaon", "Nalbari",
+    "Sivasagar", "Sonitpur", "South Salmara-Mankachar", "Tamulpur",
+    "Tinsukia", "Udalguri", "West Karbi Anglong",
+]
+VALID_TYPES = {"job", "admit_card", "result", "answer_key"}
+VALID_CATEGORIES = {"govt", "private", "defence", "banking", "railway", "teaching", "police"}
 
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
@@ -36,13 +49,10 @@ security = HTTPBearer()
 logger = logging.getLogger(__name__)
 
 
-# -------------------- HTTPS / Security Headers --------------------
+# -------------------- SECURITY HEADERS --------------------
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        # Backend is served via TLS-terminating ingress; we honor X-Forwarded-Proto
-        # and set HSTS so browsers refuse plain HTTP for one year.
         response = await call_next(request)
-        # HSTS - browser will only use HTTPS for 1 year
         response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
         response.headers['X-Content-Type-Options'] = 'nosniff'
         response.headers['X-Frame-Options'] = 'SAMEORIGIN'
@@ -51,61 +61,71 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 
 # -------------------- MODELS --------------------
-class JobBase(BaseModel):
+class NoticeBase(BaseModel):
     title: str
     organization: str
-    category: str
-    job_type: str = "recruitment"
+    type: str = "job"  # job | admit_card | result | answer_key
+    category: str = "govt"
+    district: str = "Kamrup Metropolitan"
     description: str
-    qualification: str = ""
+    location: str = "Assam"
+    thumbnail: str = ""
+    is_featured: bool = False
+    # Job-specific
+    vacancy_count: str = ""
+    eligibility: str = ""
     age_limit: str = ""
     application_fee: str = ""
-    vacancy_count: str = ""
     salary: str = ""
-    location: str = "Assam"
-    last_date: str = ""
     start_date: str = ""
-    apply_link: str = ""
-    notification_link: str = ""
-    official_website: str = ""
-    thumbnail: str = ""
-    how_to_apply: str = ""
+    last_date: str = ""
     selection_process: str = ""
+    how_to_apply: str = ""
+    apply_link: str = ""
+    notification_link: str = ""  # official notification link
+    official_website: str = ""
+    # Admit card / result / answer_key-specific
+    notice_date: str = ""
+    linked_job_id: Optional[str] = None
+    download_link: str = ""
 
 
-class Job(JobBase):
+class Notice(NoticeBase):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     slug: str = ""
     posted_date: datetime = Field(default_factory=datetime.utcnow)
     views: int = 0
-    is_featured: bool = False
 
 
-class JobCreate(JobBase):
-    is_featured: bool = False
+class NoticeCreate(NoticeBase):
+    pass
 
 
-class JobUpdate(BaseModel):
+class NoticeUpdate(BaseModel):
     title: Optional[str] = None
     organization: Optional[str] = None
+    type: Optional[str] = None
     category: Optional[str] = None
-    job_type: Optional[str] = None
+    district: Optional[str] = None
     description: Optional[str] = None
-    qualification: Optional[str] = None
+    location: Optional[str] = None
+    thumbnail: Optional[str] = None
+    is_featured: Optional[bool] = None
+    vacancy_count: Optional[str] = None
+    eligibility: Optional[str] = None
     age_limit: Optional[str] = None
     application_fee: Optional[str] = None
-    vacancy_count: Optional[str] = None
     salary: Optional[str] = None
-    location: Optional[str] = None
-    last_date: Optional[str] = None
     start_date: Optional[str] = None
+    last_date: Optional[str] = None
+    selection_process: Optional[str] = None
+    how_to_apply: Optional[str] = None
     apply_link: Optional[str] = None
     notification_link: Optional[str] = None
     official_website: Optional[str] = None
-    thumbnail: Optional[str] = None
-    how_to_apply: Optional[str] = None
-    selection_process: Optional[str] = None
-    is_featured: Optional[bool] = None
+    notice_date: Optional[str] = None
+    linked_job_id: Optional[str] = None
+    download_link: Optional[str] = None
 
 
 class LoginRequest(BaseModel):
@@ -156,17 +176,11 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 def create_jwt(username: str, must_reset: bool = False) -> str:
     now = datetime.utcnow()
-    payload = {
-        'username': username,
-        'must_reset': must_reset,
-        'iat': now,
-        'exp': now + timedelta(minutes=TOKEN_TTL_MIN),
-    }
-    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGO)
-
-
-def decode_jwt(token: str) -> dict:
-    return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
+    return jwt.encode(
+        {'username': username, 'must_reset': must_reset, 'iat': now,
+         'exp': now + timedelta(minutes=TOKEN_TTL_MIN)},
+        JWT_SECRET, algorithm=JWT_ALGO,
+    )
 
 
 def client_ip(request: Request) -> str:
@@ -179,10 +193,8 @@ def client_ip(request: Request) -> str:
 async def log_login_attempt(username: str, ip: str, success: bool, user_agent: str, reason: str = ""):
     await db.login_logs.insert_one({
         'id': str(uuid.uuid4()),
-        'username': username,
-        'ip': ip,
-        'success': success,
-        'reason': reason,
+        'username': username, 'ip': ip,
+        'success': success, 'reason': reason,
         'user_agent': user_agent[:200],
         'timestamp': datetime.utcnow(),
     })
@@ -190,7 +202,7 @@ async def log_login_attempt(username: str, ip: str, success: bool, user_agent: s
 
 async def get_current_admin(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
     try:
-        payload = decode_jwt(credentials.credentials)
+        payload = jwt.decode(credentials.credentials, JWT_SECRET, algorithms=[JWT_ALGO])
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Session expired. Please login again.")
     except jwt.PyJWTError:
@@ -198,36 +210,79 @@ async def get_current_admin(credentials: HTTPAuthorizationCredentials = Depends(
     user = await db.admin_users.find_one({'username': payload.get('username')})
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
-    return {'username': user['username'], 'must_reset': user.get('must_reset', False), 'payload': payload}
+    return {'username': user['username'], 'must_reset': user.get('must_reset', False)}
 
 
 async def require_full_admin(admin=Depends(get_current_admin)) -> dict:
-    """For admin actions: must NOT be in must_reset mode."""
     if admin['must_reset']:
         raise HTTPException(status_code=403, detail="Password reset required before performing admin actions")
     return admin
 
 
-# -------------------- STARTUP --------------------
+def validate_notice_type(t: str) -> str:
+    if t not in VALID_TYPES:
+        raise HTTPException(status_code=400, detail=f"Invalid type. Must be one of: {sorted(VALID_TYPES)}")
+    return t
+
+
+# -------------------- STARTUP / MIGRATION --------------------
 @app.on_event("startup")
 async def on_startup():
-    # Indexes
     await db.admin_users.create_index('username', unique=True)
-    await db.jobs.create_index('id', unique=True)
+    await db.notices.create_index('id', unique=True)
+    await db.notices.create_index([('type', 1), ('category', 1), ('district', 1)])
     await db.login_logs.create_index([('timestamp', -1)])
-    # Bootstrap admin user if not exists
+
+    # Bootstrap admin
     existing = await db.admin_users.find_one({'username': BOOTSTRAP_USERNAME})
     if not existing:
         await db.admin_users.insert_one({
             'username': BOOTSTRAP_USERNAME,
             'password_hash': hash_password(BOOTSTRAP_PASSWORD),
-            'must_reset': True,  # force password change on first login
+            'must_reset': True,
             'failed_attempts': 0,
             'locked_until': None,
             'last_login': None,
             'created_at': datetime.utcnow(),
         })
         logger.info("Bootstrap admin user created (must reset on first login)")
+
+    # Migrate jobs -> notices (one-time)
+    notices_count = await db.notices.count_documents({})
+    if notices_count == 0:
+        jobs_count = await db.jobs.count_documents({})
+        if jobs_count > 0:
+            logger.info(f"Migrating {jobs_count} jobs -> notices...")
+            cursor = db.jobs.find()
+            migrated = 0
+            async for d in cursor:
+                d.pop('_id', None)
+                # Rename job_type -> type
+                t = d.pop('job_type', 'recruitment')
+                # Map old types to new 4-type system
+                type_map = {
+                    'recruitment': 'job',
+                    'admission': 'job',
+                    'scholarship': 'job',
+                    'admit_card': 'admit_card',
+                    'result': 'result',
+                    'answer_key': 'answer_key',
+                }
+                d['type'] = type_map.get(t, 'job')
+                # Rename qualification -> eligibility
+                if 'qualification' in d and 'eligibility' not in d:
+                    d['eligibility'] = d.pop('qualification')
+                else:
+                    d.setdefault('eligibility', '')
+                    d.pop('qualification', None)
+                # New fields
+                d.setdefault('district', 'Kamrup Metropolitan')
+                d.setdefault('notice_date', '')
+                d.setdefault('linked_job_id', None)
+                d.setdefault('download_link', d.get('apply_link', '') if d['type'] != 'job' else '')
+                await db.notices.insert_one(d)
+                migrated += 1
+            logger.info(f"Migrated {migrated} notices.")
 
 
 # -------------------- AUTH --------------------
@@ -241,38 +296,34 @@ async def login(req: LoginRequest, request: Request):
         await log_login_attempt(req.username, ip, False, ua, 'user_not_found')
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    # Check lock
     locked_until = user.get('locked_until')
     if locked_until and locked_until > datetime.utcnow():
         remaining = int((locked_until - datetime.utcnow()).total_seconds() / 60) + 1
         await log_login_attempt(req.username, ip, False, ua, 'account_locked')
         raise HTTPException(status_code=423, detail=f"Account locked. Try again in {remaining} minute(s).")
 
-    # Verify password
     if not verify_password(req.password, user['password_hash']):
         new_attempts = user.get('failed_attempts', 0) + 1
         update = {'failed_attempts': new_attempts}
         reason = 'wrong_password'
         if new_attempts >= MAX_FAILED_ATTEMPTS:
             update['locked_until'] = datetime.utcnow() + timedelta(minutes=LOCKOUT_MIN)
-            update['failed_attempts'] = 0  # reset counter, lock takes effect
+            update['failed_attempts'] = 0
             reason = 'wrong_password_locked'
         await db.admin_users.update_one({'username': req.username}, {'$set': update})
         await log_login_attempt(req.username, ip, False, ua, reason)
         if reason == 'wrong_password_locked':
             raise HTTPException(status_code=423, detail=f"Too many failed attempts. Account locked for {LOCKOUT_MIN} minutes.")
-        attempts_left = MAX_FAILED_ATTEMPTS - new_attempts
-        raise HTTPException(status_code=401, detail=f"Invalid credentials. {attempts_left} attempt(s) left.")
+        raise HTTPException(status_code=401, detail=f"Invalid credentials. {MAX_FAILED_ATTEMPTS - new_attempts} attempt(s) left.")
 
-    # Success
     await db.admin_users.update_one(
         {'username': req.username},
         {'$set': {'failed_attempts': 0, 'locked_until': None, 'last_login': datetime.utcnow()}},
     )
     await log_login_attempt(req.username, ip, True, ua, 'success')
     must_reset = user.get('must_reset', False)
-    token = create_jwt(req.username, must_reset)
-    return {'token': token, 'username': req.username, 'must_reset': must_reset, 'ttl_min': TOKEN_TTL_MIN}
+    return {'token': create_jwt(req.username, must_reset), 'username': req.username,
+            'must_reset': must_reset, 'ttl_min': TOKEN_TTL_MIN}
 
 
 @api_router.get("/auth/verify")
@@ -282,9 +333,7 @@ async def verify(admin=Depends(get_current_admin)):
 
 @api_router.post("/auth/refresh")
 async def refresh(admin=Depends(get_current_admin)):
-    """Refresh token to extend the 30-min idle timeout."""
-    token = create_jwt(admin['username'], admin['must_reset'])
-    return {'token': token, 'ttl_min': TOKEN_TTL_MIN}
+    return {'token': create_jwt(admin['username'], admin['must_reset']), 'ttl_min': TOKEN_TTL_MIN}
 
 
 @api_router.post("/auth/change-password")
@@ -304,25 +353,50 @@ async def change_password(req: PasswordChangeRequest, admin=Depends(get_current_
             'password_changed_at': datetime.utcnow(),
         }},
     )
-    token = create_jwt(admin['username'], False)
-    return {'success': True, 'token': token, 'ttl_min': TOKEN_TTL_MIN}
+    return {'success': True, 'token': create_jwt(admin['username'], False), 'ttl_min': TOKEN_TTL_MIN}
 
 
-# -------------------- PUBLIC JOBS --------------------
-@api_router.get("/jobs")
-async def list_jobs(
+# -------------------- PUBLIC: META --------------------
+@api_router.get("/districts")
+async def get_districts():
+    return {'districts': DISTRICTS}
+
+
+@api_router.get("/stats")
+async def get_stats():
+    total = await db.notices.count_documents({})
+    by_type = {t: await db.notices.count_documents({'type': t}) for t in VALID_TYPES}
+    by_category = {c: await db.notices.count_documents({'category': c}) for c in VALID_CATEGORIES}
+    messages_count = await db.contacts.count_documents({})
+    return {
+        'total_notices': total,
+        'total_jobs': total,  # backward-compat alias for legacy frontend cache
+        'by_type': by_type,
+        'by_category': by_category,
+        'messages': messages_count,
+    }
+
+
+# -------------------- PUBLIC: NOTICES --------------------
+@api_router.get("/notices")
+async def list_notices(
+    type: Optional[str] = None,
     category: Optional[str] = None,
-    job_type: Optional[str] = None,
+    district: Optional[str] = None,
     search: Optional[str] = None,
     featured: Optional[bool] = None,
     limit: int = 50,
     skip: int = 0,
 ):
     query = {}
+    if type:
+        if type not in VALID_TYPES:
+            raise HTTPException(status_code=400, detail="Invalid type")
+        query['type'] = type
     if category:
         query['category'] = category
-    if job_type:
-        query['job_type'] = job_type
+    if district:
+        query['district'] = district
     if featured is not None:
         query['is_featured'] = featured
     if search:
@@ -331,66 +405,61 @@ async def list_jobs(
             {'organization': {'$regex': search, '$options': 'i'}},
             {'description': {'$regex': search, '$options': 'i'}},
         ]
-    cursor = db.jobs.find(query).sort('posted_date', -1).skip(skip).limit(limit)
-    jobs = [serialize(j) async for j in cursor]
-    total = await db.jobs.count_documents(query)
-    return {"jobs": jobs, "total": total}
+    cursor = db.notices.find(query).sort('posted_date', -1).skip(skip).limit(limit)
+    notices = [serialize(n) async for n in cursor]
+    total = await db.notices.count_documents(query)
+    return {"notices": notices, "total": total}
 
 
-@api_router.get("/jobs/{job_id}")
-async def get_job(job_id: str):
-    job = await db.jobs.find_one({'id': job_id})
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    await db.jobs.update_one({'id': job_id}, {'$inc': {'views': 1}})
-    return serialize(job)
+@api_router.get("/notices/{notice_id}")
+async def get_notice(notice_id: str):
+    notice = await db.notices.find_one({'id': notice_id})
+    if not notice:
+        raise HTTPException(status_code=404, detail="Notice not found")
+    await db.notices.update_one({'id': notice_id}, {'$inc': {'views': 1}})
+    serialized = serialize(notice)
+    # Resolve linked job for non-job notices
+    if serialized.get('linked_job_id'):
+        linked = await db.notices.find_one({'id': serialized['linked_job_id']})
+        if linked:
+            serialized['linked_job'] = {
+                'id': linked['id'],
+                'title': linked.get('title', ''),
+                'organization': linked.get('organization', ''),
+            }
+    return serialized
 
 
-@api_router.get("/stats")
-async def get_stats():
-    total = await db.jobs.count_documents({})
-    by_category = {}
-    for cat in ['govt', 'private', 'defence', 'banking', 'railway', 'teaching', 'police']:
-        by_category[cat] = await db.jobs.count_documents({'category': cat})
-    by_type = {}
-    for t in ['recruitment', 'admit_card', 'result', 'answer_key', 'admission', 'scholarship']:
-        by_type[t] = await db.jobs.count_documents({'job_type': t})
-    messages_count = await db.contacts.count_documents({})
-    return {
-        'total_jobs': total,
-        'by_category': by_category,
-        'by_type': by_type,
-        'messages': messages_count,
-    }
-
-
-# -------------------- ADMIN JOBS CRUD --------------------
-@api_router.post("/admin/jobs")
-async def create_job(job: JobCreate, admin=Depends(require_full_admin)):
-    job_obj = Job(**job.dict())
-    job_obj.slug = create_slug(job.title)
-    doc = job_obj.dict()
-    await db.jobs.insert_one(doc)
+# -------------------- ADMIN: NOTICES CRUD --------------------
+@api_router.post("/admin/notices")
+async def create_notice(notice: NoticeCreate, admin=Depends(require_full_admin)):
+    validate_notice_type(notice.type)
+    obj = Notice(**notice.dict())
+    obj.slug = create_slug(notice.title)
+    doc = obj.dict()
+    await db.notices.insert_one(doc)
     return serialize(doc)
 
 
-@api_router.put("/admin/jobs/{job_id}")
-async def update_job_endpoint(job_id: str, job: JobUpdate, admin=Depends(require_full_admin)):
-    updates = {k: v for k, v in job.dict().items() if v is not None}
+@api_router.put("/admin/notices/{notice_id}")
+async def update_notice(notice_id: str, notice: NoticeUpdate, admin=Depends(require_full_admin)):
+    updates = {k: v for k, v in notice.dict().items() if v is not None}
+    if 'type' in updates:
+        validate_notice_type(updates['type'])
     if 'title' in updates:
         updates['slug'] = create_slug(updates['title'])
-    result = await db.jobs.update_one({'id': job_id}, {'$set': updates})
+    result = await db.notices.update_one({'id': notice_id}, {'$set': updates})
     if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Job not found")
-    updated = await db.jobs.find_one({'id': job_id})
+        raise HTTPException(status_code=404, detail="Notice not found")
+    updated = await db.notices.find_one({'id': notice_id})
     return serialize(updated)
 
 
-@api_router.delete("/admin/jobs/{job_id}")
-async def delete_job_endpoint(job_id: str, admin=Depends(require_full_admin)):
-    result = await db.jobs.delete_one({'id': job_id})
+@api_router.delete("/admin/notices/{notice_id}")
+async def delete_notice(notice_id: str, admin=Depends(require_full_admin)):
+    result = await db.notices.delete_one({'id': notice_id})
     if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Job not found")
+        raise HTTPException(status_code=404, detail="Notice not found")
     return {'success': True}
 
 
@@ -399,10 +468,8 @@ async def delete_job_endpoint(job_id: str, admin=Depends(require_full_admin)):
 async def submit_contact(msg: ContactCreate):
     doc = {
         'id': str(uuid.uuid4()),
-        'name': msg.name,
-        'email': msg.email,
-        'subject': msg.subject,
-        'message': msg.message,
+        'name': msg.name, 'email': msg.email,
+        'subject': msg.subject, 'message': msg.message,
         'created_at': datetime.utcnow(),
     }
     await db.contacts.insert_one(doc)
@@ -421,7 +488,7 @@ async def delete_contact_endpoint(contact_id: str, admin=Depends(require_full_ad
     return {'success': True}
 
 
-# -------------------- ADMIN ACTIVITY LOG --------------------
+# -------------------- ADMIN: ACTIVITY LOG --------------------
 @api_router.get("/admin/activity")
 async def get_activity(limit: int = 100, admin=Depends(require_full_admin)):
     cursor = db.login_logs.find().sort('timestamp', -1).limit(limit)
@@ -438,11 +505,8 @@ app.include_router(api_router)
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["*"],
+    allow_credentials=True, allow_origins=["*"],
+    allow_methods=["*"], allow_headers=["*"], expose_headers=["*"],
 )
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')

@@ -3,16 +3,12 @@ import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { Search, Briefcase, Menu, X } from 'lucide-react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
+import { SECTIONS } from '../lib/constants';
 
 const NAV = [
   { label: 'Home', to: '/' },
-  { label: 'Govt Jobs', to: '/category/govt' },
-  { label: 'Private Jobs', to: '/category/private' },
-  { label: 'Admit Card', to: '/type/admit_card' },
-  { label: 'Results', to: '/type/result' },
-  { label: 'Answer Key', to: '/type/answer_key' },
-  { label: 'Admission', to: '/type/admission' },
-  { label: 'Scholarship', to: '/type/scholarship' },
+  ...SECTIONS.map(s => ({ label: s.label, to: s.path })),
+  { label: 'About', to: '/about' },
   { label: 'Contact', to: '/contact' },
 ];
 
@@ -40,16 +36,11 @@ const Header = () => {
             </div>
             <div className="min-w-0">
               <div className="text-base sm:text-lg lg:text-2xl font-extrabold tracking-tight title-font truncate">ASSAMVACANCIES<span className="text-purple-300">.COM</span></div>
-              <div className="text-[10px] lg:text-xs text-purple-200 -mt-1 hidden sm:block">Latest Jobs, Admit Card, Result, Scholarship in Assam</div>
+              <div className="text-[10px] lg:text-xs text-purple-200 -mt-1 hidden sm:block">Jobs, Admit Card, Result &amp; Answer Key in Assam</div>
             </div>
           </Link>
           <form onSubmit={onSearch} className="hidden lg:flex items-center gap-2 max-w-md w-full">
-            <Input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Search jobs, admit card, results..."
-              className="bg-white text-gray-900 border-0 h-10"
-            />
+            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search jobs, admit card, results..." className="bg-white text-gray-900 border-0 h-10" />
             <Button type="submit" className="bg-purple-600 hover:bg-purple-500 text-white h-10">
               <Search className="w-4 h-4 mr-1" /> Search
             </Button>
@@ -65,11 +56,7 @@ const Header = () => {
           {NAV.map((n) => {
             const active = loc.pathname === n.to;
             return (
-              <Link
-                key={n.to}
-                to={n.to}
-                className={`px-4 py-3 text-sm font-semibold whitespace-nowrap hover:bg-white/10 transition-colors ${active ? 'nav-link-active' : ''}`}
-              >
+              <Link key={n.to} to={n.to} className={`px-4 py-3 text-sm font-semibold whitespace-nowrap hover:bg-white/10 transition-colors ${active ? 'nav-link-active' : ''}`}>
                 {n.label}
               </Link>
             );
@@ -84,7 +71,6 @@ const Header = () => {
             {NAV.map(n => (
               <Link key={n.to} to={n.to} onClick={()=>setOpen(false)} className="px-3 py-2.5 hover:bg-white/10 rounded text-sm font-medium">{n.label}</Link>
             ))}
-            <Link to="/about" onClick={()=>setOpen(false)} className="px-3 py-2.5 hover:bg-white/10 rounded text-sm font-medium">About</Link>
           </div>
         )}
       </nav>

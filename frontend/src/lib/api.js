@@ -29,17 +29,18 @@ api.interceptors.response.use(
 
 export default api;
 
-export const fetchJobs = (params = {}) => api.get('/jobs', { params }).then(r => r.data);
-export const fetchJob = (id) => api.get(`/jobs/${id}`).then(r => r.data);
+export const fetchNotices = (params = {}) => api.get('/notices', { params }).then(r => r.data);
+export const fetchNotice = (id) => api.get(`/notices/${id}`).then(r => r.data);
 export const fetchStats = () => api.get('/stats').then(r => r.data);
+export const fetchDistricts = () => api.get('/districts').then(r => r.data);
 export const submitContact = (data) => api.post('/contact', data).then(r => r.data);
 export const loginAdmin = (data) => api.post('/auth/login', data).then(r => r.data);
 export const verifyAdmin = () => api.get('/auth/verify').then(r => r.data);
 export const refreshAdmin = () => api.post('/auth/refresh').then(r => r.data);
 export const changePassword = (data) => api.post('/auth/change-password', data).then(r => r.data);
-export const createJob = (data) => api.post('/admin/jobs', data).then(r => r.data);
-export const updateJob = (id, data) => api.put(`/admin/jobs/${id}`, data).then(r => r.data);
-export const deleteJob = (id) => api.delete(`/admin/jobs/${id}`).then(r => r.data);
+export const createNotice = (data) => api.post('/admin/notices', data).then(r => r.data);
+export const updateNotice = (id, data) => api.put(`/admin/notices/${id}`, data).then(r => r.data);
+export const deleteNotice = (id) => api.delete(`/admin/notices/${id}`).then(r => r.data);
 export const listContacts = () => api.get('/admin/contacts').then(r => r.data);
 export const deleteContact = (id) => api.delete(`/admin/contacts/${id}`).then(r => r.data);
 export const fetchActivity = () => api.get('/admin/activity').then(r => r.data);

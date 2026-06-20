@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Facebook, Twitter, Send, Youtube, TrendingUp, Award, Bell } from 'lucide-react';
-import { fetchJobs } from '../lib/api';
+import { fetchNotices } from '../lib/api';
 import AdBanner from './AdBanner';
 
 const Sidebar = () => {
@@ -9,8 +9,8 @@ const Sidebar = () => {
   const [results, setResults] = useState([]);
 
   useEffect(() => {
-    fetchJobs({ limit: 6 }).then(r => setLatest(r.jobs || []));
-    fetchJobs({ job_type: 'result', limit: 4 }).then(r => setResults(r.jobs || []));
+    fetchNotices({ type: 'job', limit: 6 }).then(r => setLatest(r.notices || [])).catch(()=>{});
+    fetchNotices({ type: 'result', limit: 4 }).then(r => setResults(r.notices || [])).catch(()=>{});
   }, []);
 
   return (
@@ -30,7 +30,7 @@ const Sidebar = () => {
         <ul className="divide-y divide-purple-50">
           {latest.map(j => (
             <li key={j.id}>
-              <Link to={`/job/${j.id}`} className="block px-4 py-3 hover:bg-purple-50 text-sm text-gray-800">{j.title}</Link>
+              <Link to={`/notice/${j.id}`} className="block px-4 py-3 hover:bg-purple-50 text-sm text-gray-800">{j.title}</Link>
             </li>
           ))}
           {latest.length === 0 && <li className="px-4 py-3 text-sm text-gray-500">Loading...</li>}
@@ -44,7 +44,7 @@ const Sidebar = () => {
         <ul className="divide-y divide-purple-50">
           {results.map(j => (
             <li key={j.id}>
-              <Link to={`/job/${j.id}`} className="block px-4 py-3 hover:bg-purple-50 text-sm text-gray-800">{j.title}</Link>
+              <Link to={`/notice/${j.id}`} className="block px-4 py-3 hover:bg-purple-50 text-sm text-gray-800">{j.title}</Link>
             </li>
           ))}
           {results.length === 0 && <li className="px-4 py-3 text-sm text-gray-500">No results yet</li>}

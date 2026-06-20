@@ -1,6 +1,7 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { Briefcase, Facebook, Twitter, Send, Youtube, Mail, MapPin } from 'lucide-react';
+import { SECTIONS } from '../lib/constants';
 
 const Footer = () => (
   <footer className="bg-purple-950 text-purple-100 mt-12">
@@ -12,7 +13,15 @@ const Footer = () => (
           </div>
           <div className="text-lg font-extrabold text-white">AssamVacancies.com</div>
         </div>
-        <p className="text-sm text-purple-200">Premier website for latest government and private jobs, admit cards, results, scholarships and admission updates in Assam and Northeast India.</p>
+        <p className="text-sm text-purple-200">Premier portal for latest jobs, admit cards, results and answer keys covering all 35 districts of Assam.</p>
+      </div>
+      <div>
+        <h4 className="text-white font-bold mb-3">Sections</h4>
+        <ul className="space-y-2 text-sm">
+          {SECTIONS.map(s => (
+            <li key={s.key}><Link to={s.path} className="hover:text-white">{s.label}</Link></li>
+          ))}
+        </ul>
       </div>
       <div>
         <h4 className="text-white font-bold mb-3">Quick Links</h4>
@@ -21,16 +30,6 @@ const Footer = () => (
           <li><Link to="/about" className="hover:text-white">About</Link></li>
           <li><Link to="/contact" className="hover:text-white">Contact</Link></li>
           <li><Link to="/admin/login" className="hover:text-white">Admin</Link></li>
-        </ul>
-      </div>
-      <div>
-        <h4 className="text-white font-bold mb-3">Categories</h4>
-        <ul className="space-y-2 text-sm">
-          <li><Link to="/category/govt" className="hover:text-white">Government Jobs</Link></li>
-          <li><Link to="/category/defence" className="hover:text-white">Defence Jobs</Link></li>
-          <li><Link to="/category/banking" className="hover:text-white">Banking Jobs</Link></li>
-          <li><Link to="/category/railway" className="hover:text-white">Railway Jobs</Link></li>
-          <li><Link to="/category/teaching" className="hover:text-white">Teaching Jobs</Link></li>
         </ul>
       </div>
       <div>
