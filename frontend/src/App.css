@@ -1,0 +1,38 @@
+.App { min-height: 100vh; background: #f5f3ff; }
+
+.assam-gradient {
+  background: linear-gradient(135deg, #6d28d9 0%, #4c1d95 100%);
+}
+
+.nav-link-active {
+  background: rgba(255,255,255,0.15);
+}
+
+.job-card {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.job-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 25px -5px rgba(109, 40, 217, 0.2);
+}
+
+.ticker {
+  display: inline-block;
+  white-space: nowrap;
+  animation: ticker-scroll 40s linear infinite;
+}
+@keyframes ticker-scroll {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-100%); }
+}
+
+.prose-purple a { color: #6d28d9; text-decoration: underline; }
+
+@font-face {
+  font-family: 'Inter';
+  font-display: swap;
+}
+
+body { font-family: 'Inter', 'Segoe UI', Roboto, sans-serif; color: #1f2937; }
+
+.title-font { font-family: 'Inter', sans-serif; letter-spacing: -0.01em; }
