@@ -4,6 +4,7 @@ import { fetchNotices } from '../lib/api';
 import NoticeCard from '../components/NoticeCard';
 import Sidebar from '../components/Sidebar';
 import AdBanner from '../components/AdBanner';
+import SeoMeta from '../components/SeoMeta';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Button } from '../components/ui/button';
 import { Filter, MapPin, Tag, X } from 'lucide-react';
@@ -56,8 +57,18 @@ const ListPage = ({ noticeType }) => {
 
   const activeFilters = [category && `Category: ${category}`, district && `District: ${district}`].filter(Boolean);
 
+  const seoTitle = isSearch
+    ? `Search "${q}"`
+    : section
+      ? `${section.plural} in Assam — All 35 Districts`
+      : 'All Notices in Assam';
+  const seoDesc = section
+    ? `Browse latest ${section.plural.toLowerCase()} across all 35 districts of Assam. Filter by category and district to find relevant notifications fast.`
+    : 'Browse latest job notifications, admit cards, results and answer keys across all 35 districts of Assam.';
+
   return (
     <div className="max-w-7xl mx-auto px-4 py-6">
+      <SeoMeta title={seoTitle} description={seoDesc} />
       <div className="bg-gradient-to-r from-purple-700 to-purple-900 text-white rounded-xl p-6 mb-6">
         <h1 className="text-2xl md:text-3xl font-extrabold title-font">{heading}</h1>
         <p className="text-purple-100 text-sm mt-1">{total} {total === 1 ? 'listing' : 'listings'} found{activeFilters.length ? ` • ${activeFilters.join(' • ')}` : ''}</p>

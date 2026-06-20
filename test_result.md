@@ -282,6 +282,54 @@ backend:
         agent: "testing"
         comment: "✅ Regression test passed after Notice refactor. GET /api/notices response includes all required security headers: Strict-Transport-Security, X-Content-Type-Options, X-Frame-Options, Referrer-Policy. All tests passed (5/5)."
 
+  - task: "SEO sitemap.xml endpoint"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ GET /api/sitemap.xml fully working. Returns 200 with Content-Type: application/xml. Body starts with <?xml version='1.0' encoding='UTF-8'?> and contains <urlset xmlns='http://www.sitemaps.org/schemas/sitemap/0.9'>. Contains all 7 static pages (/, /jobs, /admit-card, /result, /answer-key, /about, /contact) with full URLs. Contains one /notice/{id} entry for each of 19 notices in database (total 26 <url> entries = 7 static + 19 notices). URLs use public host (https://assam-careers-2.preview.emergentagent.com) not localhost:8001. Each URL entry has <loc>, <lastmod>, <changefreq>, <priority>. All tests passed (18/18)."
+
+  - task: "SEO robots.txt endpoint"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ GET /api/robots.txt fully working. Returns 200 with Content-Type: text/plain. Body contains 'User-agent: *', 'Disallow: /admin/', and 'Sitemap:' line pointing to /api/sitemap.xml with full URL. All tests passed (5/5)."
+
+  - task: "Dynamic sitemap regeneration"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ Dynamic sitemap regeneration fully working. Created test notice via POST /api/admin/notices - immediately appeared in GET /api/sitemap.xml (URL count increased from 26 to 27). Deleted test notice via DELETE /api/admin/notices/{id} - immediately removed from sitemap (URL count back to 26). No caching issues - sitemap reflects current database state on every request. All tests passed (8/8)."
+
+  - task: "SEO regression tests"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ All previous endpoints still working after SEO implementation. GET /api/ returns 200 with AssamVacancies API message. GET /api/notices returns 200. GET /api/districts returns 200. GET /api/stats returns 200. Security headers (Strict-Transport-Security, X-Content-Type-Options) still present on all responses. All tests passed (7/7)."
+
 frontend:
   - task: "Homepage with categories, ticker, latest jobs"
     implemented: true
@@ -319,7 +367,7 @@ frontend:
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 3
+  test_sequence: 4
   run_ui: false
 
 test_plan:
@@ -336,7 +384,27 @@ agent_communication:
       SECURITY HARDENING ROUND 2 - bcrypt, lockout, idle timeout, activity log, HSTS - all 56 tests passed.
   - agent: "main"
     message: |
-      REFACTOR ROUND 3 - Unified Notice content type. Please test the new API surface.
+      REFACTOR ROUND 3 - Unified Notice content type. All 93 tests passed.
+  - agent: "main"
+    message: |
+      SEO LAYER ROUND 4 - Two new backend endpoints added. Please test.
+
+      New endpoints:
+      1. GET /api/sitemap.xml
+         - Returns Content-Type: application/xml (or text/xml; either is fine)
+         - Body is valid XML starting with <?xml version="1.0" encoding="UTF-8"?> and <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+         - Contains 7 static URLs: /, /jobs, /admit-card, /result, /answer-key, /about, /contact
+         - Contains one /notice/{id} URL for EACH document in db.notices (currently 19). Total URLs should be 7 + count(notices).
+         - URLs respect X-Forwarded-Host/Proto headers (the testing agent should observe e.g. https://assam-careers-2.preview.emergentagent.com/... when accessing via that domain).
+         - Each URL entry has <loc>, <lastmod>, <changefreq>, <priority>.
+
+      2. GET /api/robots.txt
+         - Returns Content-Type: text/plain
+         - Body includes "User-agent: *", "Disallow: /admin/", and a "Sitemap:" line pointing to /api/sitemap.xml on the same origin.
+
+      3. Verify that creating a new notice (POST /api/admin/notices) makes it appear in the sitemap on the next GET /api/sitemap.xml (no caching). Then delete it and verify it's gone from the sitemap.
+
+      All previous functionality must remain working (notices CRUD, auth, contact, activity log, stats).
 
       Major changes:
       1. Collection renamed: db.jobs -> db.notices (auto-migrated 19 existing docs on startup).
@@ -419,3 +487,20 @@ agent_communication:
       - Test notices removed from database
       
       All refactor features working correctly. No issues found.
+  - agent: "testing"
+    message: |
+      ✅ ALL SEO TESTS PASSED (39/39). Comprehensive SEO endpoint testing completed successfully:
+      
+      SEO FEATURES TESTED:
+      1. GET /api/sitemap.xml (18 tests) - Returns 200 with Content-Type: application/xml. Valid XML structure with <?xml version="1.0" encoding="UTF-8"?> and sitemap namespace. Contains all 7 static pages (/, /jobs, /admit-card, /result, /answer-key, /about, /contact) with full URLs. Contains one /notice/{id} entry for each of 19 notices in database (total 26 <url> entries = 7 static + 19 notices). URLs use public host (https://assam-careers-2.preview.emergentagent.com) not localhost:8001. Each URL entry has <loc>, <lastmod>, <changefreq>, <priority>.
+      
+      2. GET /api/robots.txt (5 tests) - Returns 200 with Content-Type: text/plain. Body contains 'User-agent: *', 'Disallow: /admin/', and 'Sitemap:' line pointing to /api/sitemap.xml with full URL.
+      
+      3. Dynamic sitemap regeneration (8 tests) - Created test notice via POST /api/admin/notices - immediately appeared in GET /api/sitemap.xml (URL count increased from 26 to 27). Deleted test notice via DELETE /api/admin/notices/{id} - immediately removed from sitemap (URL count back to 26). No caching issues - sitemap reflects current database state on every request.
+      
+      4. Regression tests (7 tests) - All previous endpoints still working: GET /api/ returns AssamVacancies API message, GET /api/notices returns 200, GET /api/districts returns 200, GET /api/stats returns 200. Security headers (Strict-Transport-Security, X-Content-Type-Options) still present on all responses.
+      
+      CLEANUP COMPLETED:
+      - Admin password reset to 'admin' with must_reset=true for user testing
+      
+      All SEO features working correctly. No issues found.

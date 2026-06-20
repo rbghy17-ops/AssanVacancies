@@ -4,7 +4,8 @@ import { fetchNotices, fetchStats } from '../lib/api';
 import NoticeCard from '../components/NoticeCard';
 import Sidebar from '../components/Sidebar';
 import AdBanner from '../components/AdBanner';
-import { Shield, Building2, Train, Landmark, GraduationCap, Briefcase, BookOpen, Award, Bell, ChevronRight, FileCheck } from 'lucide-react';
+import SeoMeta from '../components/SeoMeta';
+import { Shield, Building2, Train, Landmark, GraduationCap, Briefcase, BookOpen, Award, ChevronRight, FileCheck } from 'lucide-react';
 import { SECTIONS } from '../lib/constants';
 
 const CATS = [
@@ -46,6 +47,7 @@ const Home = () => {
 
   return (
     <div>
+      <SeoMeta />
       <section className="assam-gradient text-white">
         <div className="max-w-7xl mx-auto px-4 py-10 md:py-14">
           <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">

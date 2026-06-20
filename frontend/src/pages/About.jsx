@@ -1,8 +1,10 @@
 import React from 'react';
+import SeoMeta from '../components/SeoMeta';
 import { Briefcase, Target, Users, Award } from 'lucide-react';
 
 const About = () => (
   <div className="max-w-7xl mx-auto px-4 py-8">
+    <SeoMeta title="About Us" description="AssamVacancies.com is your trusted source for the latest government and private jobs, admit cards, results and answer keys across all 35 districts of Assam." />
     <div className="bg-gradient-to-r from-purple-700 to-purple-900 text-white rounded-xl p-8 mb-6">
       <h1 className="text-3xl md:text-4xl font-extrabold title-font">About AssamVacancies.com</h1>
       <p className="text-purple-100 mt-2 max-w-3xl">Your trusted source for the latest government and private job updates, admit cards, results, scholarships and admission notifications across Assam and Northeast India.</p>

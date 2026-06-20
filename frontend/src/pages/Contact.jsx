@@ -4,6 +4,7 @@ import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Textarea } from '../components/ui/textarea';
 import { Label } from '../components/ui/label';
+import SeoMeta from '../components/SeoMeta';
 import { toast } from '../hooks/use-toast';
 import { Mail, Phone, MapPin, Send } from 'lucide-react';
 
@@ -30,6 +31,7 @@ const Contact = () => {
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
+      <SeoMeta title="Contact Us" description="Get in touch with AssamVacancies.com — submit a job, report an issue or ask a question about jobs, admit cards, results or answer keys in Assam." />
       <div className="bg-gradient-to-r from-purple-700 to-purple-900 text-white rounded-xl p-6 mb-6">
         <h1 className="text-2xl md:text-3xl font-extrabold title-font">Contact Us</h1>
         <p className="text-purple-100 text-sm mt-1">Have a question? Send us a message.</p>

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -498,6 +498,75 @@ async def get_activity(limit: int = 100, admin=Depends(require_full_admin)):
 @api_router.get("/")
 async def root():
     return {'message': 'AssamVacancies API'}
+
+
+# -------------------- SEO: SITEMAP + ROBOTS --------------------
+def _public_origin(request: Request) -> str:
+    """Resolve the public-facing origin from forwarded headers (set by ingress)."""
+    proto = request.headers.get('x-forwarded-proto', 'https')
+    host = (request.headers.get('x-forwarded-host')
+            or request.headers.get('host')
+            or 'assam-careers-2.preview.emergentagent.com')
+    return f"{proto}://{host}"
+
+
+@api_router.get("/sitemap.xml")
+async def sitemap_xml(request: Request):
+    """
+    Dynamic XML sitemap. Auto-reflects current state of db.notices on every
+    request, so publishing/unpublishing a notice is instantly visible to crawlers
+    without any cache invalidation step.
+    """
+    origin = _public_origin(request)
+    now_iso = datetime.utcnow().strftime('%Y-%m-%d')
+
+    static_pages = [
+        ('/', 'daily', '1.0'),
+        ('/jobs', 'daily', '0.9'),
+        ('/admit-card', 'daily', '0.9'),
+        ('/result', 'daily', '0.9'),
+        ('/answer-key', 'daily', '0.9'),
+        ('/about', 'monthly', '0.5'),
+        ('/contact', 'monthly', '0.5'),
+    ]
+
+    lines = ['<?xml version="1.0" encoding="UTF-8"?>',
+             '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
+    for path, freq, prio in static_pages:
+        lines.append(
+            f"  <url><loc>{origin}{path}</loc>"
+            f"<lastmod>{now_iso}</lastmod>"
+            f"<changefreq>{freq}</changefreq>"
+            f"<priority>{prio}</priority></url>"
+        )
+
+    cursor = db.notices.find({}, {'id': 1, 'posted_date': 1, 'type': 1}).sort('posted_date', -1)
+    async for n in cursor:
+        pd = n.get('posted_date')
+        lastmod = pd.strftime('%Y-%m-%d') if isinstance(pd, datetime) else now_iso
+        lines.append(
+            f"  <url><loc>{origin}/notice/{n['id']}</loc>"
+            f"<lastmod>{lastmod}</lastmod>"
+            f"<changefreq>weekly</changefreq>"
+            f"<priority>0.7</priority></url>"
+        )
+    lines.append('</urlset>')
+
+    return Response('\n'.join(lines), media_type='application/xml')
+
+
+@api_router.get("/robots.txt")
+async def robots_txt(request: Request):
+    """Backend-served robots.txt (frontend also serves a static copy at /robots.txt)."""
+    origin = _public_origin(request)
+    body = (
+        "User-agent: *\n"
+        "Disallow: /admin/\n"
+        "Disallow: /admin\n"
+        "Allow: /\n\n"
+        f"Sitemap: {origin}/api/sitemap.xml\n"
+    )
+    return Response(body, media_type='text/plain')
 
 
 app.include_router(api_router)

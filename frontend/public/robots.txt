@@ -1,0 +1,10 @@
+# AssamVacancies.com — robots.txt
+# Disallow admin area; allow everything else.
+
+User-agent: *
+Disallow: /admin/
+Disallow: /admin
+Allow: /
+
+# Sitemap is generated dynamically by the backend and reflects current notices.
+Sitemap: https://assam-careers-2.preview.emergentagent.com/api/sitemap.xml

@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { fetchNotice } from '../lib/api';
 import Sidebar from '../components/Sidebar';
 import AdBanner from '../components/AdBanner';
+import SeoMeta from '../components/SeoMeta';
 import { Calendar, MapPin, Clock, FileText, ExternalLink, ChevronRight, ArrowLeft, Download, Link2 } from 'lucide-react';
 import { Badge } from '../components/ui/badge';
 import { SECTION_BY_TYPE } from '../lib/constants';
@@ -32,6 +33,7 @@ const NoticeDetail = () => {
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6">
+      <SeoMeta notice={notice} />
       <nav className="text-xs text-gray-500 flex items-center gap-1 mb-4 flex-wrap">
         <Link to="/" className="hover:text-purple-700">Home</Link>
         <ChevronRight className="w-3 h-3" />
