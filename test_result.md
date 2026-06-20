@@ -330,6 +330,18 @@ backend:
         agent: "testing"
         comment: "✅ All previous endpoints still working after SEO implementation. GET /api/ returns 200 with AssamVacancies API message. GET /api/notices returns 200. GET /api/districts returns 200. GET /api/stats returns 200. Security headers (Strict-Transport-Security, X-Content-Type-Options) still present on all responses. All tests passed (7/7)."
 
+  - task: "Notice lifecycle logic (is_closed, days_left, include_closed)"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ ALL LIFECYCLE TESTS PASSED (49/49). Comprehensive testing completed: 1) Default listing filters out closed notices - GET /api/notices returns only open notices (total < 19), all have is_closed=false and days_left field (int or null). 2) include_closed=true returns all 19 notices with mix of is_closed true/false. 3) Closed notice detail accessible - GET /api/notices/{closed_id} returns 200 with is_closed=true and full payload (URL stays live for SEO/archival). 4) Sitemap includes all 19 notices (including closed) - GET /api/sitemap.xml contains exactly 19 /notice/ entries. 5) Admin CRUD respects status - POST with future last_date returns is_closed=false and days_left~=90, POST with past last_date returns is_closed=true and days_left=null, default listing excludes past notice, include_closed=true includes it, PUT to change past→future updates is_closed to false. 6) Date parser robustness verified - fuzzy parsing handles 'Exam: 25 July 2025', 'Objections: 18 July 2025', empty/N/A dates (is_closed=false, days_left=null). 7) Regression tests passed - GET /api/stats, /api/districts, POST /api/contact, POST /api/auth/login, POST /api/auth/refresh, GET /api/admin/activity all working. CLEANUP: Admin password reset to 'admin' with must_reset=true, test notices deleted. No issues found."
+
 frontend:
   - task: "Homepage with categories, ticker, latest jobs"
     implemented: true
@@ -367,7 +379,7 @@ frontend:
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 4
+  test_sequence: 5
   run_ui: false
 
 test_plan:
@@ -387,24 +399,36 @@ agent_communication:
       REFACTOR ROUND 3 - Unified Notice content type. All 93 tests passed.
   - agent: "main"
     message: |
-      SEO LAYER ROUND 4 - Two new backend endpoints added. Please test.
+      SEO LAYER ROUND 4 - All 39 tests passed.
+  - agent: "main"
+    message: |
+      LIFECYCLE ROUND 5 - Please test the new notice lifecycle logic.
 
-      New endpoints:
-      1. GET /api/sitemap.xml
-         - Returns Content-Type: application/xml (or text/xml; either is fine)
-         - Body is valid XML starting with <?xml version="1.0" encoding="UTF-8"?> and <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-         - Contains 7 static URLs: /, /jobs, /admit-card, /result, /answer-key, /about, /contact
-         - Contains one /notice/{id} URL for EACH document in db.notices (currently 19). Total URLs should be 7 + count(notices).
-         - URLs respect X-Forwarded-Host/Proto headers (the testing agent should observe e.g. https://assam-careers-2.preview.emergentagent.com/... when accessing via that domain).
-         - Each URL entry has <loc>, <lastmod>, <changefreq>, <priority>.
+      Backend changes:
+      1. New helper `parse_notice_date(s)` parses free-form date strings (e.g., "15 August 2025", "Exam: 25 July 2025") using dateutil with fuzzy parsing + strptime fallbacks.
+      2. New helper `compute_status(doc)` adds two computed fields to each notice response: `is_closed` (bool) and `days_left` (int|null). Status is derived from current date vs `last_date`.
+      3. GET /api/notices now accepts `include_closed=false` (default false). When false, notices whose `last_date` has passed are filtered out of the response.
+      4. GET /api/notices/{id} ALWAYS returns the notice regardless of status — URLs stay live for SEO/archival. Response includes `is_closed` and `days_left`.
+      5. POST/PUT /api/admin/notices responses also include is_closed and days_left.
+      6. Sitemap continues to include ALL notices (closed or not).
 
-      2. GET /api/robots.txt
-         - Returns Content-Type: text/plain
-         - Body includes "User-agent: *", "Disallow: /admin/", and a "Sitemap:" line pointing to /api/sitemap.xml on the same origin.
+      Seed data was updated: 14 jobs now have dates spread across all status zones (some open, some <3 days, some 3-7 days, some >7 days, some past/closed). Posted_dates are mixed so some notices are within 72h (eligible for "New" badge — frontend only).
 
-      3. Verify that creating a new notice (POST /api/admin/notices) makes it appear in the sitemap on the next GET /api/sitemap.xml (no caching). Then delete it and verify it's gone from the sitemap.
+      Tests required:
+      1. GET /api/notices (default) should return ONLY open notices. Total should be 13 (19 total minus 6 currently closed).
+      2. GET /api/notices?include_closed=true returns all 19, with mix of is_closed=true and false.
+      3. Each notice in the response has the fields `is_closed` (bool) and `days_left` (int or null).
+      4. For type=job notices with future last_date: is_closed=false and days_left is a non-negative integer.
+      5. For notices with last_date in the past: is_closed=true and days_left=null. They must NOT appear in GET /api/notices (default), but MUST appear when include_closed=true.
+      6. GET /api/notices/{closed_id} (a closed notice id) returns 200 with the notice and is_closed=true — URL stays live.
+      7. Sitemap GET /api/sitemap.xml still contains <loc> entries for ALL 19 notices (including closed). Closed notices stay in sitemap for SEO.
+      8. POST /api/admin/notices with a future last_date returns response containing is_closed=false and days_left>=0.
+      9. POST /api/admin/notices with a past last_date returns is_closed=true.
+      10. Regression: GET /api/stats, /api/districts, /api/contact, /api/auth/login all still work.
 
-      All previous functionality must remain working (notices CRUD, auth, contact, activity log, stats).
+      Note: admin password may have been changed to "AdminPass1234" during my earlier manual UI test. If admin/admin fails, try "AdminPass1234".
+
+      Cleanup at end: reset admin to admin/admin with must_reset=true.
 
       Major changes:
       1. Collection renamed: db.jobs -> db.notices (auto-migrated 19 existing docs on startup).
@@ -504,3 +528,27 @@ agent_communication:
       - Admin password reset to 'admin' with must_reset=true for user testing
       
       All SEO features working correctly. No issues found.
+  - agent: "testing"
+    message: |
+      ✅ ALL LIFECYCLE TESTS PASSED (49/49). Comprehensive Notice lifecycle testing completed successfully:
+      
+      LIFECYCLE FEATURES TESTED:
+      1. Default listing filters out closed notices (10 tests) - GET /api/notices returns only open notices (total < 19). All returned notices have is_closed=false and days_left field (int or null). GET /api/notices?type=job returns only open job notices with days_left >= 0.
+      
+      2. include_closed=true returns everything (6 tests) - GET /api/notices?include_closed=true returns all 19 notices. Mix of is_closed=true and is_closed=false. All notices have is_closed and days_left fields. Found closed notices for further testing.
+      
+      3. Closed notice detail accessible (3 tests) - GET /api/notices/{closed_id} returns 200 with is_closed=true and full payload (title, organization, etc.). URL stays live for SEO/archival purposes.
+      
+      4. Sitemap includes closed notices (3 tests) - GET /api/sitemap.xml contains exactly 19 /notice/ entries. Closed notices are included in sitemap for SEO.
+      
+      5. Admin CRUD respects status (14 tests) - Admin login successful (password was AdminPass1234 from previous testing). POST /api/admin/notices with future last_date (90 days) returns is_closed=false and days_left~=90. POST with past last_date (01 January 2020) returns is_closed=true and days_left=null. GET /api/notices (default) does NOT include past notice. GET /api/notices?include_closed=true includes past notice. GET /api/notices/{past_id} returns 200. PUT /api/admin/notices/{past_id} to change last_date to future updates is_closed to false. Both test notices deleted successfully.
+      
+      6. Date parser robustness (3 tests) - Fuzzy parsing handles various formats: "Exam: 25 July 2025", "Objections: 18 July 2025" (both parsed correctly). Empty or "N/A" last_date results in is_closed=false and days_left=null (notice stays open).
+      
+      7. Regression tests (6 tests) - All existing endpoints still work: GET /api/stats, GET /api/districts, POST /api/contact, POST /api/auth/login, POST /api/auth/refresh, GET /api/admin/activity.
+      
+      CLEANUP COMPLETED:
+      - Admin password reset to 'admin' with must_reset=true for user testing
+      - Test notices (TEST_LIFECYCLE) deleted from database
+      
+      All lifecycle features working correctly. No issues found.

@@ -13,7 +13,14 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 from typing import List, Optional
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
+
+# Optional dateutil for flexible date parsing
+try:
+    from dateutil import parser as _date_parser  # type: ignore
+    _HAS_DATEUTIL = True
+except ImportError:  # pragma: no cover
+    _HAS_DATEUTIL = False
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -160,6 +167,46 @@ def serialize(doc: dict) -> dict:
     for k, v in list(doc.items()):
         if isinstance(v, datetime):
             doc[k] = v.isoformat()
+    return doc
+
+
+# -------------------- LIFECYCLE STATUS --------------------
+_DATE_FORMATS = (
+    '%d %B %Y', '%d %b %Y', '%B %d, %Y', '%b %d, %Y',
+    '%Y-%m-%d', '%d-%m-%Y', '%d/%m/%Y',
+)
+
+
+def parse_notice_date(s: Optional[str]) -> Optional[date]:
+    """Parse free-form date strings entered by admins. Returns date or None."""
+    if not s or not isinstance(s, str):
+        return None
+    s = s.strip()
+    if _HAS_DATEUTIL:
+        try:
+            return _date_parser.parse(s, dayfirst=True, fuzzy=True).date()
+        except (ValueError, TypeError, OverflowError):
+            pass
+    for fmt in _DATE_FORMATS:
+        try:
+            return datetime.strptime(s, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def compute_status(doc: dict) -> dict:
+    """
+    Single source of truth for notice lifecycle status on the backend.
+    Adds `is_closed` and `days_left` fields. Mirrored by frontend
+    `computeNoticeStatus` for badge rendering.
+    """
+    today = date.today()
+    last_d = parse_notice_date(doc.get('last_date'))
+    is_closed = bool(last_d and last_d < today)
+    days_left = (last_d - today).days if (last_d and not is_closed) else None
+    doc['is_closed'] = is_closed
+    doc['days_left'] = days_left
     return doc
 
 
@@ -385,6 +432,7 @@ async def list_notices(
     district: Optional[str] = None,
     search: Optional[str] = None,
     featured: Optional[bool] = None,
+    include_closed: bool = False,
     limit: int = 50,
     skip: int = 0,
 ):
@@ -405,19 +453,24 @@ async def list_notices(
             {'organization': {'$regex': search, '$options': 'i'}},
             {'description': {'$regex': search, '$options': 'i'}},
         ]
-    cursor = db.notices.find(query).sort('posted_date', -1).skip(skip).limit(limit)
-    notices = [serialize(n) async for n in cursor]
-    total = await db.notices.count_documents(query)
-    return {"notices": notices, "total": total}
+    # Fetch all matching, then filter closed in Python (last_date is free-form string)
+    cursor = db.notices.find(query).sort('posted_date', -1)
+    all_results = [compute_status(serialize(n)) async for n in cursor]
+    if not include_closed:
+        all_results = [n for n in all_results if not n.get('is_closed')]
+    total = len(all_results)
+    paged = all_results[skip: skip + limit]
+    return {"notices": paged, "total": total}
 
 
 @api_router.get("/notices/{notice_id}")
 async def get_notice(notice_id: str):
+    """Always returns the notice regardless of status (closed notices stay live for SEO/archival)."""
     notice = await db.notices.find_one({'id': notice_id})
     if not notice:
         raise HTTPException(status_code=404, detail="Notice not found")
     await db.notices.update_one({'id': notice_id}, {'$inc': {'views': 1}})
-    serialized = serialize(notice)
+    serialized = compute_status(serialize(notice))
     # Resolve linked job for non-job notices
     if serialized.get('linked_job_id'):
         linked = await db.notices.find_one({'id': serialized['linked_job_id']})
@@ -438,7 +491,7 @@ async def create_notice(notice: NoticeCreate, admin=Depends(require_full_admin))
     obj.slug = create_slug(notice.title)
     doc = obj.dict()
     await db.notices.insert_one(doc)
-    return serialize(doc)
+    return compute_status(serialize(doc))
 
 
 @api_router.put("/admin/notices/{notice_id}")
@@ -452,7 +505,7 @@ async def update_notice(notice_id: str, notice: NoticeUpdate, admin=Depends(requ
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Notice not found")
     updated = await db.notices.find_one({'id': notice_id})
-    return serialize(updated)
+    return compute_status(serialize(updated))
 
 
 @api_router.delete("/admin/notices/{notice_id}")

@@ -11,9 +11,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Switch } from '../components/ui/switch';
 import { Badge } from '../components/ui/badge';
-import { LogOut, Plus, Pencil, Trash2, Briefcase, BarChart3, Mail, FileText, Search, Shield, KeyRound, Check, XCircle } from 'lucide-react';
+import { LogOut, Plus, Pencil, Trash2, Briefcase, BarChart3, Mail, FileText, Search, Shield, KeyRound, Check, XCircle, Lock } from 'lucide-react';
 import { toast } from '../hooks/use-toast';
 import { DISTRICTS, CATEGORIES, SECTIONS } from '../lib/constants';
+import { computeNoticeStatus } from '../lib/noticeStatus';
 
 const TYPES = SECTIONS.map(s => ({ key: s.key, label: s.label }));
 
@@ -54,11 +55,11 @@ const AdminDashboard = () => {
 
   const refresh = () => {
     fetchStats().then(setStats).catch(()=>{});
-    const p = { limit: 300 };
+    const p = { limit: 300, include_closed: true };
     if (search) p.search = search;
     if (filterType !== 'all') p.type = filterType;
     fetchNotices(p).then(r => setNotices(r.notices || [])).catch(()=>{});
-    fetchNotices({ type: 'job', limit: 200 }).then(r => setLinkableJobs(r.notices || [])).catch(()=>{});
+    fetchNotices({ type: 'job', limit: 200, include_closed: true }).then(r => setLinkableJobs(r.notices || [])).catch(()=>{});
     listContacts().then(setContacts).catch(()=>{});
     fetchActivity().then(setActivity).catch(()=>{});
   };
@@ -67,7 +68,7 @@ const AdminDashboard = () => {
   useEffect(() => {
     if (user && !user.must_reset) {
       const t = setTimeout(() => {
-        const p = { limit: 300 };
+        const p = { limit: 300, include_closed: true };
         if (search) p.search = search;
         if (filterType !== 'all') p.type = filterType;
         fetchNotices(p).then(r => setNotices(r.notices || [])).catch(()=>{});
@@ -194,12 +195,15 @@ const AdminDashboard = () => {
                     <th className="text-left px-3 py-2">Type</th>
                     <th className="text-left px-3 py-2">Category</th>
                     <th className="text-left px-3 py-2">District</th>
+                    <th className="text-left px-3 py-2">Status</th>
                     <th className="text-left px-3 py-2">Views</th>
                     <th className="text-right px-3 py-2">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {notices.map(n => (
+                  {notices.map(n => {
+                    const { isClosed, daysLeft, urgency } = computeNoticeStatus(n);
+                    return (
                     <tr key={n.id} className="border-b border-purple-50 hover:bg-purple-50/40">
                       <td className="px-3 py-2 max-w-md truncate">
                         {n.is_featured && <span className="text-purple-700 mr-1" title="Featured">★</span>}
@@ -208,14 +212,21 @@ const AdminDashboard = () => {
                       <td className="px-3 py-2"><Badge variant="outline" className="border-purple-200 text-purple-700 text-xs">{TYPES.find(t=>t.key===n.type)?.label || n.type}</Badge></td>
                       <td className="px-3 py-2 capitalize">{n.category}</td>
                       <td className="px-3 py-2">{n.district || '—'}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {isClosed
+                          ? <Badge className="bg-gray-200 text-gray-700 border border-gray-300 text-xs"><Lock className="w-3 h-3 mr-1" />Closed</Badge>
+                          : n.type === 'job' && daysLeft !== null
+                            ? <Badge className={`text-xs border ${urgency === 'red' ? 'bg-red-100 text-red-800 border-red-200' : urgency === 'amber' ? 'bg-amber-100 text-amber-800 border-amber-200' : 'bg-emerald-100 text-emerald-800 border-emerald-200'}`}>{daysLeft}d left</Badge>
+                            : <Badge className="bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs">Open</Badge>}
+                      </td>
                       <td className="px-3 py-2">{n.views || 0}</td>
                       <td className="px-3 py-2 text-right whitespace-nowrap">
                         <Button size="sm" variant="outline" onClick={()=>openEdit(n)} className="mr-1 border-purple-300"><Pencil className="w-3.5 h-3.5" /></Button>
                         <Button size="sm" variant="outline" onClick={()=>remove(n)} className="text-red-600 border-red-200 hover:bg-red-50"><Trash2 className="w-3.5 h-3.5" /></Button>
                       </td>
                     </tr>
-                  ))}
-                  {notices.length === 0 && <tr><td colSpan={6} className="text-center py-6 text-gray-500">No notices</td></tr>}
+                  );})}
+                  {notices.length === 0 && <tr><td colSpan={7} className="text-center py-6 text-gray-500">No notices</td></tr>}
                 </tbody>
               </table>
             </div>

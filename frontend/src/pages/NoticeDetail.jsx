@@ -4,6 +4,8 @@ import { fetchNotice } from '../lib/api';
 import Sidebar from '../components/Sidebar';
 import AdBanner from '../components/AdBanner';
 import SeoMeta from '../components/SeoMeta';
+import NoticeStatusBadges from '../components/NoticeStatusBadges';
+import { computeNoticeStatus } from '../lib/noticeStatus';
 import { Calendar, MapPin, Clock, FileText, ExternalLink, ChevronRight, ArrowLeft, Download, Link2 } from 'lucide-react';
 import { Badge } from '../components/ui/badge';
 import { SECTION_BY_TYPE } from '../lib/constants';
@@ -30,6 +32,7 @@ const NoticeDetail = () => {
 
   const section = SECTION_BY_TYPE[notice.type] || { label: notice.type, path: '/' };
   const isJob = notice.type === 'job';
+  const { isClosed } = computeNoticeStatus(notice);
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6">
@@ -41,6 +44,13 @@ const NoticeDetail = () => {
         <ChevronRight className="w-3 h-3" />
         <span className="text-gray-700 truncate">{notice.title}</span>
       </nav>
+
+      {isClosed && (
+        <div className="mb-4 rounded-lg border border-gray-300 bg-gray-50 text-gray-800 px-4 py-3 text-sm">
+          <strong>This notice is closed.</strong> The application window has ended. This page remains available for archival reference.
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2">
           <Link to={section.path} className="inline-flex items-center gap-1 text-sm text-purple-700 hover:text-purple-900 mb-3"><ArrowLeft className="w-4 h-4" /> Back to {section.label}</Link>
@@ -50,7 +60,8 @@ const NoticeDetail = () => {
                 <Badge className="bg-purple-100 text-purple-800 border-0 capitalize">{notice.category}</Badge>
                 <Badge variant="outline" className="border-purple-200 text-purple-700">{section.label}</Badge>
                 {notice.district && <Badge variant="outline" className="border-emerald-200 text-emerald-700"><MapPin className="w-3 h-3 mr-1" />{notice.district}</Badge>}
-                {notice.is_featured && <Badge className="bg-purple-600 text-white border-0">Featured</Badge>}
+                {notice.is_featured && !isClosed && <Badge className="bg-purple-600 text-white border-0">Featured</Badge>}
+                <NoticeStatusBadges notice={notice} size="lg" />
               </div>
               <h1 className="text-2xl md:text-3xl font-extrabold text-purple-900 leading-tight title-font">{notice.title}</h1>
               <div className="flex flex-wrap gap-x-4 gap-y-1 mt-3 text-sm text-gray-600">
@@ -125,17 +136,27 @@ const NoticeDetail = () => {
 
               <section>
                 <h2 className="text-lg font-bold text-purple-900 mb-3">Important Links</h2>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {isClosed && isJob ? (
+                  <div className="px-4 py-3 bg-gray-100 border border-gray-200 text-gray-700 rounded-lg text-sm">
+                    Application window has closed. Links below are kept for reference only.
+                  </div>
+                ) : null}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
                   {!isJob && notice.download_link && (
                     <a href={notice.download_link} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between px-4 py-3 bg-purple-700 hover:bg-purple-800 text-white rounded-lg font-semibold">
                       <span className="flex items-center gap-2"><Download className="w-4 h-4" /> Download {section.label}</span>
                       <ExternalLink className="w-4 h-4" />
                     </a>
                   )}
-                  {isJob && notice.apply_link && (
+                  {isJob && notice.apply_link && !isClosed && (
                     <a href={notice.apply_link} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between px-4 py-3 bg-purple-700 hover:bg-purple-800 text-white rounded-lg font-semibold">
                       Apply Online <ExternalLink className="w-4 h-4" />
                     </a>
+                  )}
+                  {isJob && notice.apply_link && isClosed && (
+                    <span className="flex items-center justify-between px-4 py-3 bg-gray-200 text-gray-500 rounded-lg font-semibold cursor-not-allowed">
+                      Applications Closed
+                    </span>
                   )}
                   {isJob && notice.notification_link && (
                     <a href={notice.notification_link} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between px-4 py-3 bg-white border border-purple-300 text-purple-700 hover:bg-purple-50 rounded-lg font-semibold">
