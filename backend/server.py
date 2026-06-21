@@ -15,6 +15,11 @@ from typing import List, Optional
 import uuid
 from datetime import datetime, timedelta, date
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.interval import IntervalTrigger
+
+import aggregator
+
 # Optional dateutil for flexible date parsing
 try:
     from dateutil import parser as _date_parser  # type: ignore
@@ -102,6 +107,7 @@ class Notice(NoticeBase):
     slug: str = ""
     posted_date: datetime = Field(default_factory=datetime.utcnow)
     views: int = 0
+    status: str = "published"  # published | draft (aggregator-ingested)
 
 
 class NoticeCreate(NoticeBase):
@@ -147,6 +153,41 @@ class AdSettings(BaseModel):
 
 class SiteVerification(BaseModel):
     google_site_verification: str = ""
+
+
+# Aggregator models
+VALID_SOURCE_TYPES = {"job", "admit_card", "result", "answer_key"}
+
+
+class AggregatorSourceBase(BaseModel):
+    name: str
+    base_url: str
+    list_url: str
+    enabled: bool = True
+    default_type: str = "job"
+    default_category: str = "govt"
+    default_district: str = "Kamrup Metropolitan"
+    notes: str = ""
+
+
+class AggregatorSourceCreate(AggregatorSourceBase):
+    pass
+
+
+class AggregatorSourceUpdate(BaseModel):
+    name: Optional[str] = None
+    base_url: Optional[str] = None
+    list_url: Optional[str] = None
+    enabled: Optional[bool] = None
+    default_type: Optional[str] = None
+    default_category: Optional[str] = None
+    default_district: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class AggregatorSettings(BaseModel):
+    enabled: bool = False
+    interval_hours: int = 24
 
 
 DEFAULT_DISABLED_AD_PATHS = ['/privacy', '/terms', '/disclaimer', '/contact']
@@ -309,13 +350,99 @@ def validate_notice_type(t: str) -> str:
     return t
 
 
+# -------------------- AGGREGATOR: scheduler & seed --------------------
+_scheduler: Optional[AsyncIOScheduler] = None
+AGGREGATOR_JOB_ID = 'aggregator_run_all'
+
+# Hard-coded official sources for the very first seed. The admin can edit /
+# disable / add more via the source-registry endpoints; competitor or
+# aggregator sites must NEVER be added here.
+DEFAULT_SOURCES = [
+    {
+        'name': 'Assam Public Service Commission (APSC)',
+        'base_url': 'https://apsc.nic.in',
+        'list_url': 'https://apsc.nic.in/notifications',
+        'default_type': 'job',
+        'default_category': 'govt',
+        'default_district': 'Kamrup Metropolitan',
+        'enabled': True,
+        'notes': 'Official Assam state PSC — recruitment notifications.',
+    },
+    {
+        'name': 'State Level Police Recruitment Board, Assam (SLPRB)',
+        'base_url': 'https://slprbassam.in',
+        'list_url': 'https://slprbassam.in/advertisement.html',
+        'default_type': 'job',
+        'default_category': 'police',
+        'default_district': 'Kamrup Metropolitan',
+        'enabled': True,
+        'notes': 'Official Assam Police recruitment board.',
+    },
+]
+
+
+async def seed_aggregator_defaults():
+    for src in DEFAULT_SOURCES:
+        existing = await db.aggregator_sources.find_one({'list_url': src['list_url']})
+        if existing:
+            continue
+        doc = {'id': str(uuid.uuid4()), 'created_at': datetime.utcnow(),
+               'last_run_at': None, 'last_run_summary': None, **src}
+        await db.aggregator_sources.insert_one(doc)
+
+
+async def _get_aggregator_settings() -> dict:
+    doc = await db.site_settings.find_one({'_key': 'aggregator'})
+    return {
+        'enabled': (doc or {}).get('enabled', False),
+        'interval_hours': (doc or {}).get('interval_hours', 24),
+    }
+
+
+async def _scheduled_run_all():
+    try:
+        result = await aggregator.run_all_enabled(db)
+        logger.info(
+            "Scheduled aggregator run finished — sources=%s drafts=%s",
+            result['sources_checked'],
+            sum(r.get('new_drafts', 0) for r in result['runs']),
+        )
+    except Exception:
+        logger.exception("Scheduled aggregator run failed")
+
+
+async def reschedule_aggregator():
+    """Re-apply settings to the live scheduler."""
+    global _scheduler
+    if _scheduler is None:
+        return
+    settings = await _get_aggregator_settings()
+    existing = _scheduler.get_job(AGGREGATOR_JOB_ID)
+    if existing:
+        _scheduler.remove_job(AGGREGATOR_JOB_ID)
+    if settings['enabled'] and settings['interval_hours'] > 0:
+        _scheduler.add_job(
+            _scheduled_run_all,
+            trigger=IntervalTrigger(hours=int(settings['interval_hours'])),
+            id=AGGREGATOR_JOB_ID,
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+
+
 # -------------------- STARTUP / MIGRATION --------------------
 @app.on_event("startup")
 async def on_startup():
     await db.admin_users.create_index('username', unique=True)
     await db.notices.create_index('id', unique=True)
     await db.notices.create_index([('type', 1), ('category', 1), ('district', 1)])
+    await db.notices.create_index('status')
+    await db.notices.create_index('dedup_key')
     await db.login_logs.create_index([('timestamp', -1)])
+    await db.aggregator_sources.create_index('id', unique=True)
+    await db.aggregator_sources.create_index('list_url', unique=True)
+    await db.aggregator_runs.create_index([('run_at', -1)])
 
     # Bootstrap admin
     existing = await db.admin_users.find_one({'username': BOOTSTRAP_USERNAME})
@@ -367,6 +494,23 @@ async def on_startup():
                 await db.notices.insert_one(d)
                 migrated += 1
             logger.info(f"Migrated {migrated} notices.")
+
+    # Backfill `status` on legacy notices so admin & aggregator dedup work consistently.
+    await db.notices.update_many(
+        {'status': {'$exists': False}},
+        {'$set': {'status': 'published'}},
+    )
+
+    # Seed the default authoritative sources (idempotent).
+    await seed_aggregator_defaults()
+
+    # Boot the scheduler. It stays idle until aggregator settings are enabled.
+    global _scheduler
+    if _scheduler is None:
+        _scheduler = AsyncIOScheduler(timezone='Asia/Kolkata')
+        _scheduler.start()
+        await reschedule_aggregator()
+        logger.info("Aggregator scheduler started")
 
 
 # -------------------- AUTH --------------------
@@ -448,9 +592,10 @@ async def get_districts():
 
 @api_router.get("/stats")
 async def get_stats():
-    total = await db.notices.count_documents({})
-    by_type = {t: await db.notices.count_documents({'type': t}) for t in VALID_TYPES}
-    by_category = {c: await db.notices.count_documents({'category': c}) for c in VALID_CATEGORIES}
+    pub_filter = {'status': {'$ne': 'draft'}}
+    total = await db.notices.count_documents(pub_filter)
+    by_type = {t: await db.notices.count_documents({**pub_filter, 'type': t}) for t in VALID_TYPES}
+    by_category = {c: await db.notices.count_documents({**pub_filter, 'category': c}) for c in VALID_CATEGORIES}
     messages_count = await db.contacts.count_documents({})
     return {
         'total_notices': total,
@@ -473,7 +618,7 @@ async def list_notices(
     limit: int = 50,
     skip: int = 0,
 ):
-    query = {}
+    query = {'status': {'$ne': 'draft'}}
     if type:
         if type not in VALID_TYPES:
             raise HTTPException(status_code=400, detail="Invalid type")
@@ -505,6 +650,9 @@ async def get_notice(notice_id: str):
     """Always returns the notice regardless of status (closed notices stay live for SEO/archival)."""
     notice = await db.notices.find_one({'id': notice_id})
     if not notice:
+        raise HTTPException(status_code=404, detail="Notice not found")
+    # Drafts (aggregator-ingested, not yet reviewed) are hidden from public detail.
+    if notice.get('status') == 'draft':
         raise HTTPException(status_code=404, detail="Notice not found")
     await db.notices.update_one({'id': notice_id}, {'$inc': {'views': 1}})
     serialized = compute_status(serialize(notice))
@@ -826,7 +974,7 @@ async def sitemap_xml(request: Request):
             f"<priority>{prio}</priority></url>"
         )
 
-    cursor = db.notices.find({}, {'id': 1, 'posted_date': 1, 'type': 1}).sort('posted_date', -1)
+    cursor = db.notices.find({'status': {'$ne': 'draft'}}, {'id': 1, 'posted_date': 1, 'type': 1}).sort('posted_date', -1)
     async for n in cursor:
         pd = n.get('posted_date')
         lastmod = pd.strftime('%Y-%m-%d') if isinstance(pd, datetime) else now_iso
@@ -855,6 +1003,101 @@ async def robots_txt(request: Request):
     return Response(body, media_type='text/plain')
 
 
+# -------------------- AGGREGATOR: ADMIN API --------------------
+@api_router.get("/admin/aggregator/sources")
+async def list_sources(admin=Depends(require_full_admin)):
+    cursor = db.aggregator_sources.find().sort('name', 1)
+    return [serialize(s) async for s in cursor]
+
+
+@api_router.post("/admin/aggregator/sources")
+async def create_source(payload: AggregatorSourceCreate, admin=Depends(require_full_admin)):
+    if payload.default_type not in VALID_SOURCE_TYPES:
+        raise HTTPException(status_code=400, detail="Invalid default_type")
+    existing = await db.aggregator_sources.find_one({'list_url': payload.list_url})
+    if existing:
+        raise HTTPException(status_code=409, detail="A source with this list_url already exists")
+    doc = {
+        'id': str(uuid.uuid4()),
+        'created_at': datetime.utcnow(),
+        'last_run_at': None,
+        'last_run_summary': None,
+        **payload.dict(),
+    }
+    await db.aggregator_sources.insert_one(doc)
+    return serialize(doc)
+
+
+@api_router.put("/admin/aggregator/sources/{source_id}")
+async def update_source(source_id: str, payload: AggregatorSourceUpdate,
+                        admin=Depends(require_full_admin)):
+    updates = {k: v for k, v in payload.dict().items() if v is not None}
+    if 'default_type' in updates and updates['default_type'] not in VALID_SOURCE_TYPES:
+        raise HTTPException(status_code=400, detail="Invalid default_type")
+    result = await db.aggregator_sources.update_one({'id': source_id}, {'$set': updates})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Source not found")
+    doc = await db.aggregator_sources.find_one({'id': source_id})
+    return serialize(doc)
+
+
+@api_router.delete("/admin/aggregator/sources/{source_id}")
+async def delete_source(source_id: str, admin=Depends(require_full_admin)):
+    result = await db.aggregator_sources.delete_one({'id': source_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Source not found")
+    return {'success': True}
+
+
+@api_router.post("/admin/aggregator/sources/{source_id}/run")
+async def run_single_source(source_id: str, admin=Depends(require_full_admin)):
+    source = await db.aggregator_sources.find_one({'id': source_id})
+    if not source:
+        raise HTTPException(status_code=404, detail="Source not found")
+    summary = await aggregator.run_source(db, source)
+    return summary
+
+
+@api_router.post("/admin/aggregator/run-all")
+async def run_all(admin=Depends(require_full_admin)):
+    """Manual trigger — runs every enabled source once."""
+    return await aggregator.run_all_enabled(db)
+
+
+@api_router.get("/admin/aggregator/runs")
+async def list_runs(limit: int = 50, admin=Depends(require_full_admin)):
+    cursor = db.aggregator_runs.find().sort('run_at', -1).limit(min(max(limit, 1), 200))
+    return [serialize(r) async for r in cursor]
+
+
+@api_router.get("/admin/aggregator/drafts")
+async def list_drafts(limit: int = 50, skip: int = 0, admin=Depends(require_full_admin)):
+    cursor = db.notices.find({'status': 'draft'}).sort('posted_date', -1).skip(skip).limit(limit)
+    items = [serialize(n) async for n in cursor]
+    total = await db.notices.count_documents({'status': 'draft'})
+    return {'drafts': items, 'total': total}
+
+
+@api_router.get("/admin/aggregator/settings")
+async def get_aggregator_settings(admin=Depends(require_full_admin)):
+    return await _get_aggregator_settings()
+
+
+@api_router.put("/admin/aggregator/settings")
+async def update_aggregator_settings(payload: AggregatorSettings,
+                                     admin=Depends(require_full_admin)):
+    if payload.interval_hours < 1 or payload.interval_hours > 168:
+        raise HTTPException(status_code=400, detail="interval_hours must be between 1 and 168")
+    await db.site_settings.update_one(
+        {'_key': 'aggregator'},
+        {'$set': {'_key': 'aggregator', 'enabled': payload.enabled,
+                  'interval_hours': int(payload.interval_hours)}},
+        upsert=True,
+    )
+    await reschedule_aggregator()
+    return await _get_aggregator_settings()
+
+
 app.include_router(api_router)
 
 app.add_middleware(SecurityHeadersMiddleware)
@@ -869,4 +1112,11 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
+    global _scheduler
+    if _scheduler is not None:
+        try:
+            _scheduler.shutdown(wait=False)
+        except Exception:
+            pass
+        _scheduler = None
     client.close()
