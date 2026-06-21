@@ -277,13 +277,44 @@ async def _is_fuzzy_duplicate(db, title: str, organization: str,
 
 
 # -------------------- RUN --------------------
+def should_auto_publish(source: Dict[str, Any]) -> bool:
+    """Per-source graduated-trust decision (used by candidate_to_notice).
+
+    Modes:
+      - 'always'  : publish immediately, regardless of trust.
+      - 'never'   : always queue as draft for admin review.
+      - 'auto'    : publish only if trust_score >= trust_threshold AND at
+                    least TRUST_MIN_DECISIONS decisions have been made.
+    """
+    mode = (source or {}).get('auto_publish_mode', 'auto')
+    if mode == 'always':
+        return True
+    if mode == 'never':
+        return False
+    approvals = source.get('approvals', 0) or 0
+    rejections = source.get('rejections', 0) or 0
+    total = approvals + rejections
+    if total < TRUST_MIN_DECISIONS:
+        return False
+    score = round(100 * approvals / total) if total else 0
+    return score >= int(source.get('trust_threshold', 85) or 85)
+
+
+TRUST_MIN_DECISIONS = 5
+
+
 def candidate_to_notice(candidate: Dict[str, Any],
                         source: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, str]]:
-    """Map a candidate into a Notice document (status=draft) + return facts used."""
+    """Map a candidate into a Notice document + return facts used.
+    Status is `published` only when the source's graduated-trust rules allow it,
+    otherwise `draft` (default — admin must review)."""
     facts = _extract_structured_facts(candidate)
     title = candidate['title']
     source_url = candidate['source_url']
     summary = _build_summary(title, source.get('name', 'Source'), facts)
+
+    auto = should_auto_publish(source)
+    status = 'published' if auto else 'draft'
 
     notice = {
         'id': str(uuid.uuid4()),
@@ -315,7 +346,7 @@ def candidate_to_notice(candidate: Dict[str, Any],
         'linked_job_id': None,
         'download_link': source_url if source.get('default_type', 'job') != 'job' else '',
         # Aggregator metadata
-        'status': 'draft',          # never auto-publish
+        'status': status,
         'source_id': source['id'],
         'source_url': source_url,
         'source_name': source.get('name', ''),
@@ -338,6 +369,7 @@ async def run_source(db, source: Dict[str, Any]) -> Dict[str, Any]:
         'started_at': started.isoformat(),
         'fetched': 0,
         'new_drafts': 0,
+        'new_published': 0,
         'skipped_url_dup': 0,
         'skipped_fuzzy_dup': 0,
         'errors': [],
@@ -374,7 +406,10 @@ async def run_source(db, source: Dict[str, Any]) -> Dict[str, Any]:
                 continue
             doc, _ = candidate_to_notice(cand, source)
             await db.notices.insert_one(doc)
-            summary['new_drafts'] += 1
+            if doc['status'] == 'published':
+                summary['new_published'] += 1
+            else:
+                summary['new_drafts'] += 1
         except Exception as e:
             summary['errors'].append(f"item_error: {str(e)[:200]}")
 
@@ -394,8 +429,9 @@ async def _finalize(db, source: Dict[str, Any], summary: Dict[str, Any],
         {'$set': {
             'last_run_at': started,
             'last_run_summary': {k: summary[k] for k in
-                                 ('fetched', 'new_drafts', 'skipped_url_dup',
-                                  'skipped_fuzzy_dup', 'errors', 'parse_failed')},
+                                 ('fetched', 'new_drafts', 'new_published',
+                                  'skipped_url_dup', 'skipped_fuzzy_dup',
+                                  'errors', 'parse_failed')},
         }},
     )
     return summary

@@ -168,6 +168,9 @@ class AggregatorSourceBase(BaseModel):
     default_category: str = "govt"
     default_district: str = "Kamrup Metropolitan"
     notes: str = ""
+    # Graduated trust (P2)
+    auto_publish_mode: str = "auto"      # auto | always | never
+    trust_threshold: int = 85            # 0..100, used when mode=auto
 
 
 class AggregatorSourceCreate(AggregatorSourceBase):
@@ -183,6 +186,8 @@ class AggregatorSourceUpdate(BaseModel):
     default_category: Optional[str] = None
     default_district: Optional[str] = None
     notes: Optional[str] = None
+    auto_publish_mode: Optional[str] = None
+    trust_threshold: Optional[int] = None
 
 
 class AggregatorSettings(BaseModel):
@@ -350,6 +355,30 @@ def validate_notice_type(t: str) -> str:
     return t
 
 
+VALID_AUTO_PUBLISH_MODES = {'auto', 'always', 'never'}
+TRUST_MIN_DECISIONS = 5
+
+
+def _trust_score(approvals: int, rejections: int) -> Optional[int]:
+    total = (approvals or 0) + (rejections or 0)
+    if total < TRUST_MIN_DECISIONS:
+        return None
+    return round(100 * (approvals or 0) / total)
+
+
+def _should_auto_publish(source: dict) -> bool:
+    """Decide whether a freshly-ingested candidate from this source publishes immediately."""
+    mode = (source or {}).get('auto_publish_mode', 'auto')
+    if mode == 'always':
+        return True
+    if mode == 'never':
+        return False
+    score = _trust_score(source.get('approvals', 0), source.get('rejections', 0))
+    if score is None:
+        return False
+    return score >= int(source.get('trust_threshold', 85) or 85)
+
+
 # -------------------- AGGREGATOR: scheduler & seed --------------------
 _scheduler: Optional[AsyncIOScheduler] = None
 AGGREGATOR_JOB_ID = 'aggregator_run_all'
@@ -499,6 +528,16 @@ async def on_startup():
     await db.notices.update_many(
         {'status': {'$exists': False}},
         {'$set': {'status': 'published'}},
+    )
+
+    # Backfill P2 trust fields on existing sources.
+    await db.aggregator_sources.update_many(
+        {'approvals': {'$exists': False}},
+        {'$set': {'approvals': 0, 'rejections': 0}},
+    )
+    await db.aggregator_sources.update_many(
+        {'auto_publish_mode': {'$exists': False}},
+        {'$set': {'auto_publish_mode': 'auto', 'trust_threshold': 85}},
     )
 
     # Seed the default authoritative sources (idempotent).
@@ -1007,13 +1046,27 @@ async def robots_txt(request: Request):
 @api_router.get("/admin/aggregator/sources")
 async def list_sources(admin=Depends(require_full_admin)):
     cursor = db.aggregator_sources.find().sort('name', 1)
-    return [serialize(s) async for s in cursor]
+    items = []
+    async for s in cursor:
+        s = serialize(s)
+        s.setdefault('approvals', 0)
+        s.setdefault('rejections', 0)
+        s.setdefault('auto_publish_mode', 'auto')
+        s.setdefault('trust_threshold', 85)
+        s['trust_score'] = _trust_score(s['approvals'], s['rejections'])
+        s['will_auto_publish'] = _should_auto_publish(s)
+        items.append(s)
+    return items
 
 
 @api_router.post("/admin/aggregator/sources")
 async def create_source(payload: AggregatorSourceCreate, admin=Depends(require_full_admin)):
     if payload.default_type not in VALID_SOURCE_TYPES:
         raise HTTPException(status_code=400, detail="Invalid default_type")
+    if payload.auto_publish_mode not in VALID_AUTO_PUBLISH_MODES:
+        raise HTTPException(status_code=400, detail="Invalid auto_publish_mode")
+    if not (0 <= payload.trust_threshold <= 100):
+        raise HTTPException(status_code=400, detail="trust_threshold must be 0..100")
     existing = await db.aggregator_sources.find_one({'list_url': payload.list_url})
     if existing:
         raise HTTPException(status_code=409, detail="A source with this list_url already exists")
@@ -1022,6 +1075,8 @@ async def create_source(payload: AggregatorSourceCreate, admin=Depends(require_f
         'created_at': datetime.utcnow(),
         'last_run_at': None,
         'last_run_summary': None,
+        'approvals': 0,
+        'rejections': 0,
         **payload.dict(),
     }
     await db.aggregator_sources.insert_one(doc)
@@ -1034,7 +1089,23 @@ async def update_source(source_id: str, payload: AggregatorSourceUpdate,
     updates = {k: v for k, v in payload.dict().items() if v is not None}
     if 'default_type' in updates and updates['default_type'] not in VALID_SOURCE_TYPES:
         raise HTTPException(status_code=400, detail="Invalid default_type")
+    if 'auto_publish_mode' in updates and updates['auto_publish_mode'] not in VALID_AUTO_PUBLISH_MODES:
+        raise HTTPException(status_code=400, detail="Invalid auto_publish_mode")
+    if 'trust_threshold' in updates and not (0 <= updates['trust_threshold'] <= 100):
+        raise HTTPException(status_code=400, detail="trust_threshold must be 0..100")
     result = await db.aggregator_sources.update_one({'id': source_id}, {'$set': updates})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Source not found")
+    doc = await db.aggregator_sources.find_one({'id': source_id})
+    return serialize(doc)
+
+
+@api_router.post("/admin/aggregator/sources/{source_id}/reset-trust")
+async def reset_source_trust(source_id: str, admin=Depends(require_full_admin)):
+    result = await db.aggregator_sources.update_one(
+        {'id': source_id},
+        {'$set': {'approvals': 0, 'rejections': 0}},
+    )
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Source not found")
     doc = await db.aggregator_sources.find_one({'id': source_id})
@@ -1090,25 +1161,34 @@ class DraftBulkAction(BaseModel):
 
 @api_router.post("/admin/aggregator/drafts/{draft_id}/approve")
 async def approve_draft(draft_id: str, admin=Depends(require_full_admin)):
-    result = await db.notices.update_one(
-        {'id': draft_id, 'status': 'draft'},
+    draft = await db.notices.find_one({'id': draft_id, 'status': 'draft'})
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    await db.notices.update_one(
+        {'id': draft_id},
         {'$set': {'status': 'published', 'approved_at': datetime.utcnow(),
                   'approved_by': admin['username'],
-                  # refresh posted_date so it appears at the top of public feeds
                   'posted_date': datetime.utcnow()}},
     )
-    if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Draft not found")
+    if draft.get('source_id'):
+        await db.aggregator_sources.update_one(
+            {'id': draft['source_id']},
+            {'$inc': {'approvals': 1}},
+        )
     return {'success': True}
 
 
 @api_router.post("/admin/aggregator/drafts/{draft_id}/reject")
 async def reject_draft(draft_id: str, admin=Depends(require_full_admin)):
-    # Hard-delete rejected drafts. Their `dedup_key` stays out so the next
-    # aggregator run can re-pick the same URL if the admin changes their mind.
-    result = await db.notices.delete_one({'id': draft_id, 'status': 'draft'})
-    if result.deleted_count == 0:
+    draft = await db.notices.find_one({'id': draft_id, 'status': 'draft'})
+    if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
+    if draft.get('source_id'):
+        await db.aggregator_sources.update_one(
+            {'id': draft['source_id']},
+            {'$inc': {'rejections': 1}},
+        )
+    await db.notices.delete_one({'id': draft_id, 'status': 'draft'})
     return {'success': True}
 
 
@@ -1118,14 +1198,30 @@ async def bulk_draft_action(payload: DraftBulkAction, admin=Depends(require_full
         raise HTTPException(status_code=400, detail="action must be 'approve' or 'reject'")
     if not payload.ids:
         return {'success': True, 'affected': 0}
+
+    # Snapshot source_ids so we can credit/debit trust correctly even after publish/delete.
+    drafts = await db.notices.find(
+        {'id': {'$in': payload.ids}, 'status': 'draft'}, {'id': 1, 'source_id': 1},
+    ).to_list(len(payload.ids))
+    source_counts: dict = {}
+    for d in drafts:
+        sid = d.get('source_id')
+        if sid:
+            source_counts[sid] = source_counts.get(sid, 0) + 1
+
     if payload.action == 'approve':
         result = await db.notices.update_many(
             {'id': {'$in': payload.ids}, 'status': 'draft'},
             {'$set': {'status': 'published', 'approved_at': datetime.utcnow(),
                       'approved_by': admin['username'], 'posted_date': datetime.utcnow()}},
         )
+        for sid, n in source_counts.items():
+            await db.aggregator_sources.update_one({'id': sid}, {'$inc': {'approvals': n}})
         return {'success': True, 'affected': result.modified_count}
+
     result = await db.notices.delete_many({'id': {'$in': payload.ids}, 'status': 'draft'})
+    for sid, n in source_counts.items():
+        await db.aggregator_sources.update_one({'id': sid}, {'$inc': {'rejections': n}})
     return {'success': True, 'affected': result.deleted_count}
 
 

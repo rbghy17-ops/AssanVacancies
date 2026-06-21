@@ -5,8 +5,7 @@ import {
   aggApproveDraft, aggRejectDraft, aggBulkDrafts,
   aggGetSettings, aggUpdateSettings,
 } from '../lib/api';
-import api from '../lib/api';
-import { Button } from './ui/button';
+import api from '../lib/api';import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Textarea } from './ui/textarea';
 import { Label } from './ui/label';
@@ -18,7 +17,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { toast } from '../hooks/use-toast';
 import {
   Plus, Pencil, Trash2, Play, ExternalLink, CheckCircle2, XCircle,
-  Loader2, AlertCircle, RefreshCw,
+  Loader2, AlertCircle, RefreshCw, RotateCcw,
 } from 'lucide-react';
 
 const TYPES = [
@@ -33,6 +32,19 @@ const emptySource = {
   name: '', base_url: '', list_url: '',
   enabled: true, default_type: 'job', default_category: 'govt',
   default_district: 'Kamrup Metropolitan', notes: '',
+  auto_publish_mode: 'auto', trust_threshold: 85,
+};
+
+const MODE_LABELS = { auto: 'Auto (trust-based)', always: 'Always publish', never: 'Always review' };
+
+const TrustBadge = ({ score, mode }) => {
+  if (mode === 'always') return <Badge className="bg-amber-100 text-amber-800 border border-amber-200 text-xs">always-publish</Badge>;
+  if (mode === 'never') return <Badge className="bg-gray-100 text-gray-700 border border-gray-300 text-xs">always-review</Badge>;
+  if (score === null || score === undefined) return <Badge className="bg-gray-100 text-gray-600 border border-gray-300 text-xs">no trust yet</Badge>;
+  const cls = score >= 85 ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
+    : score >= 60 ? 'bg-amber-100 text-amber-800 border-amber-200'
+      : 'bg-red-100 text-red-800 border-red-200';
+  return <Badge className={`${cls} border text-xs`}>trust {score}%</Badge>;
 };
 
 const emptyDraftEdit = {
@@ -102,8 +114,20 @@ export default function AggregatorPanel() {
       default_category: s.default_category || 'govt',
       default_district: s.default_district || 'Kamrup Metropolitan',
       notes: s.notes || '',
+      auto_publish_mode: s.auto_publish_mode || 'auto',
+      trust_threshold: s.trust_threshold ?? 85,
     });
     setSrcDialogOpen(true);
+  };
+  const resetTrust = async (s) => {
+    if (!window.confirm(`Reset trust counters for "${s.name}"? Approvals=${s.approvals} Rejections=${s.rejections} will be zeroed.`)) return;
+    try {
+      await api.post(`/admin/aggregator/sources/${s.id}/reset-trust`);
+      toast({ title: 'Trust reset' });
+      refreshAll();
+    } catch (e) {
+      toast({ title: 'Reset failed', variant: 'destructive' });
+    }
   };
   const saveSource = async () => {
     try {
@@ -352,12 +376,12 @@ export default function AggregatorPanel() {
             </div>
 
             <div className="overflow-x-auto -mx-4 sm:mx-0">
-              <table className="w-full text-sm min-w-[800px]">
+              <table className="w-full text-sm min-w-[920px]">
                 <thead className="bg-purple-50 text-purple-900">
                   <tr>
                     <th className="text-left px-3 py-2">Name</th>
                     <th className="text-left px-3 py-2">List URL</th>
-                    <th className="text-left px-3 py-2">Type</th>
+                    <th className="text-left px-3 py-2">Trust</th>
                     <th className="text-left px-3 py-2">Last run</th>
                     <th className="text-left px-3 py-2">Enabled</th>
                     <th className="text-right px-3 py-2">Actions</th>
@@ -369,16 +393,28 @@ export default function AggregatorPanel() {
                       <td className="px-3 py-2 align-top">
                         <div className="font-medium text-purple-900">{s.name}</div>
                         {s.notes && <div className="text-xs text-gray-500">{s.notes}</div>}
+                        <div className="mt-1">
+                          <Badge variant="outline" className="border-purple-200 text-purple-700 text-[10px]">
+                            {TYPES.find(t => t.key === s.default_type)?.label || s.default_type}
+                          </Badge>
+                        </div>
                       </td>
                       <td className="px-3 py-2 align-top text-xs">
                         <a href={s.list_url} target="_blank" rel="noopener noreferrer" className="text-purple-700 hover:underline break-all">
                           {s.list_url}
                         </a>
                       </td>
-                      <td className="px-3 py-2 align-top text-xs">
-                        <Badge variant="outline" className="border-purple-200 text-purple-700">
-                          {TYPES.find(t => t.key === s.default_type)?.label || s.default_type}
-                        </Badge>
+                      <td className="px-3 py-2 align-top">
+                        <TrustBadge score={s.trust_score} mode={s.auto_publish_mode} />
+                        <div className="text-[11px] text-gray-500 mt-1">
+                          ✓ {s.approvals || 0} / ✗ {s.rejections || 0}
+                        </div>
+                        <div className="text-[10px] text-gray-400">
+                          {s.auto_publish_mode === 'auto' ? `threshold ${s.trust_threshold}%` : MODE_LABELS[s.auto_publish_mode]}
+                        </div>
+                        {s.will_auto_publish && (
+                          <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] mt-1">auto-publish active</Badge>
+                        )}
                       </td>
                       <td className="px-3 py-2 align-top text-xs">
                         {s.last_run_at
@@ -388,7 +424,7 @@ export default function AggregatorPanel() {
                                 <div className="text-[11px] text-gray-500">
                                   {s.last_run_summary.parse_failed
                                     ? <span className="text-red-600 inline-flex items-center"><AlertCircle className="w-3 h-3 mr-1" /> failed</span>
-                                    : <>+{s.last_run_summary.new_drafts || 0} new, {s.last_run_summary.fetched || 0} fetched</>}
+                                    : <>+{s.last_run_summary.new_drafts || 0} draft, +{s.last_run_summary.new_published || 0} pub, {s.last_run_summary.fetched || 0} fetched</>}
                                 </div>
                               )}
                             </>
@@ -406,6 +442,9 @@ export default function AggregatorPanel() {
                         </Button>
                         <Button size="sm" variant="outline" onClick={() => openEditSource(s)} className="mr-1 border-purple-300" data-testid={`agg-source-edit-${s.id}`}>
                           <Pencil className="w-3.5 h-3.5" />
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => resetTrust(s)} className="mr-1 border-purple-300" title="Reset trust counters" data-testid={`agg-source-reset-trust-${s.id}`}>
+                          <RotateCcw className="w-3.5 h-3.5" />
                         </Button>
                         <Button size="sm" variant="outline" onClick={() => deleteSource(s)} className="text-red-600 border-red-300 hover:bg-red-50" data-testid={`agg-source-delete-${s.id}`}>
                           <Trash2 className="w-3.5 h-3.5" />
@@ -530,6 +569,33 @@ export default function AggregatorPanel() {
             <div>
               <Label>Notes</Label>
               <Textarea rows={2} value={srcForm.notes} onChange={e => setSrcForm({ ...srcForm, notes: e.target.value })} />
+            </div>
+            <div className="border-t border-purple-100 pt-3">
+              <div className="text-sm font-semibold text-purple-900 mb-2">Graduated trust (auto-publish)</div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label>Mode</Label>
+                  <Select value={srcForm.auto_publish_mode}
+                          onValueChange={(v) => setSrcForm({ ...srcForm, auto_publish_mode: v })}>
+                    <SelectTrigger data-testid="agg-src-mode"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="auto">Auto (trust-based)</SelectItem>
+                      <SelectItem value="always">Always publish</SelectItem>
+                      <SelectItem value="never">Always review</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label>Trust threshold (%)</Label>
+                  <Input type="number" min={0} max={100}
+                         value={srcForm.trust_threshold}
+                         onChange={e => setSrcForm({ ...srcForm, trust_threshold: parseInt(e.target.value || '0', 10) })}
+                         data-testid="agg-src-threshold" />
+                </div>
+              </div>
+              <p className="text-[11px] text-gray-500 mt-2">
+                In <strong>auto</strong> mode, items only auto-publish once this source has at least 5 approve/reject decisions and the approval rate is ≥ threshold. Otherwise they queue as drafts.
+              </p>
             </div>
             <div className="flex items-center gap-2">
               <Switch checked={srcForm.enabled} onCheckedChange={(v) => setSrcForm({ ...srcForm, enabled: v })} data-testid="agg-src-enabled" />
