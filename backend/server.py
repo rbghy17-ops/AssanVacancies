@@ -716,13 +716,25 @@ async def list_notices(
             {'organization': {'$regex': search, '$options': 'i'}},
             {'description': {'$regex': search, '$options': 'i'}},
         ]
-    # Fetch all matching, then filter closed in Python (last_date is free-form string)
-    cursor = db.notices.find(query).sort('posted_date', -1)
-    all_results = [compute_status(serialize(n)) async for n in cursor]
-    if not include_closed:
-        all_results = [n for n in all_results if not n.get('is_closed')]
-    total = len(all_results)
-    paged = all_results[skip: skip + limit]
+    # Performance: push skip/limit to MongoDB whenever we don't need
+    # post-filtering. include_closed=False has to be Python-side because
+    # `last_date` is a free-form string parsed by compute_status, so we cap
+    # the fetch at 2000 (>> any sane page) to bound memory.
+    if include_closed:
+        total = await db.notices.count_documents(query)
+        cursor = db.notices.find(query).sort('posted_date', -1).skip(skip).limit(limit)
+        paged = [compute_status(serialize(n)) async for n in cursor]
+        return {"notices": paged, "total": total}
+
+    HARD_CAP = 2000
+    cursor = db.notices.find(query).sort('posted_date', -1).limit(HARD_CAP)
+    open_only = []
+    async for n in cursor:
+        item = compute_status(serialize(n))
+        if not item.get('is_closed'):
+            open_only.append(item)
+    total = len(open_only)
+    paged = open_only[skip: skip + limit]
     return {"notices": paged, "total": total}
 
 
