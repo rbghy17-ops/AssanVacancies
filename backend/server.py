@@ -168,9 +168,6 @@ class AggregatorSourceBase(BaseModel):
     default_category: str = "govt"
     default_district: str = "Kamrup Metropolitan"
     notes: str = ""
-    # Graduated trust (P2)
-    auto_publish_mode: str = "auto"      # auto | always | never
-    trust_threshold: int = 85            # 0..100, used when mode=auto
 
 
 class AggregatorSourceCreate(AggregatorSourceBase):
@@ -186,8 +183,6 @@ class AggregatorSourceUpdate(BaseModel):
     default_category: Optional[str] = None
     default_district: Optional[str] = None
     notes: Optional[str] = None
-    auto_publish_mode: Optional[str] = None
-    trust_threshold: Optional[int] = None
 
 
 class AggregatorSettings(BaseModel):
@@ -355,28 +350,47 @@ def validate_notice_type(t: str) -> str:
     return t
 
 
-VALID_AUTO_PUBLISH_MODES = {'auto', 'always', 'never'}
-TRUST_MIN_DECISIONS = 5
+VALID_TRUST_LEVELS = {'new', 'probationary', 'trusted'}
+PROMO_TO_PROBATIONARY_CLEANS = 10
+PROMO_TO_TRUSTED_CLEANS = 25
+PARSE_CLEAN_DAYS_FOR_TRUSTED = 30
+CONSECUTIVE_PARSE_FAILURES_DEMOTION = 2
+
+# Fields whose change on a published aggregator-sourced notice counts as a
+# "post-publish factual correction" — triggering an automatic demotion of a
+# Trusted source. Cosmetic edits (description rewording, location, slug, etc.)
+# don't count.
+FACTUAL_FIELDS = (
+    'title', 'vacancy_count', 'last_date', 'application_fee',
+    'eligibility', 'apply_link', 'notification_link', 'organization',
+)
 
 
-def _trust_score(approvals: int, rejections: int) -> Optional[int]:
-    total = (approvals or 0) + (rejections or 0)
-    if total < TRUST_MIN_DECISIONS:
-        return None
-    return round(100 * (approvals or 0) / total)
+def _next_level_after_clean(level: str, counter: int,
+                             last_parse_failure_at: Optional[datetime]) -> str:
+    """Return the new trust_level after a clean approval."""
+    if level == 'new' and counter >= PROMO_TO_PROBATIONARY_CLEANS:
+        return 'probationary'
+    if level == 'probationary' and counter >= PROMO_TO_TRUSTED_CLEANS:
+        # require parse-clean for >= 30 days (or never had a failure)
+        if last_parse_failure_at is None:
+            return 'trusted'
+        if (datetime.utcnow() - last_parse_failure_at) >= timedelta(days=PARSE_CLEAN_DAYS_FOR_TRUSTED):
+            return 'trusted'
+    return level
 
 
-def _should_auto_publish(source: dict) -> bool:
-    """Decide whether a freshly-ingested candidate from this source publishes immediately."""
-    mode = (source or {}).get('auto_publish_mode', 'auto')
-    if mode == 'always':
-        return True
-    if mode == 'never':
-        return False
-    score = _trust_score(source.get('approvals', 0), source.get('rejections', 0))
-    if score is None:
-        return False
-    return score >= int(source.get('trust_threshold', 85) or 85)
+async def _record_demotion(source_id: str, reason: str):
+    """Drop a trusted source back to probationary and reset its clean counter."""
+    await db.aggregator_sources.update_one(
+        {'id': source_id, 'trust_level': 'trusted'},
+        {'$set': {
+            'trust_level': 'probationary',
+            'consecutive_clean_approvals': 0,
+            'last_demoted_at': datetime.utcnow(),
+            'last_demoted_reason': reason,
+        }},
+    )
 
 
 # -------------------- AGGREGATOR: scheduler & seed --------------------
@@ -530,14 +544,27 @@ async def on_startup():
         {'$set': {'status': 'published'}},
     )
 
-    # Backfill P2 trust fields on existing sources.
+    # Backfill new 3-level trust state machine on existing sources.
     await db.aggregator_sources.update_many(
         {'approvals': {'$exists': False}},
         {'$set': {'approvals': 0, 'rejections': 0}},
     )
     await db.aggregator_sources.update_many(
-        {'auto_publish_mode': {'$exists': False}},
-        {'$set': {'auto_publish_mode': 'auto', 'trust_threshold': 85}},
+        {'trust_level': {'$exists': False}},
+        {'$set': {
+            'trust_level': 'new',
+            'consecutive_clean_approvals': 0,
+            'consecutive_parse_failures': 0,
+            'last_parse_failure_at': None,
+            'last_demoted_at': None,
+            'last_demoted_reason': None,
+        }},
+    )
+    # Drop deprecated P2 fields if present.
+    await db.aggregator_sources.update_many(
+        {'$or': [{'auto_publish_mode': {'$exists': True}},
+                 {'trust_threshold': {'$exists': True}}]},
+        {'$unset': {'auto_publish_mode': '', 'trust_threshold': ''}},
     )
 
     # Seed the default authoritative sources (idempotent).
@@ -725,6 +752,31 @@ async def update_notice(notice_id: str, notice: NoticeUpdate, admin=Depends(requ
         validate_notice_type(updates['type'])
     if 'title' in updates:
         updates['slug'] = create_slug(updates['title'])
+
+    # Aggregator integration: detect draft edits (break clean streak) and
+    # post-publish factual corrections (demote trusted sources).
+    existing = await db.notices.find_one({'id': notice_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Notice not found")
+    sid = existing.get('source_id')
+    if sid:
+        if existing.get('status') == 'draft':
+            # Any meaningful field change after ingestion -> not a clean approval anymore.
+            updates['edited_since_ingest'] = True
+        elif existing.get('status') == 'published':
+            # Factual correction on an aggregator-published notice demotes a Trusted source.
+            changed_factual = [f for f in FACTUAL_FIELDS
+                               if f in updates and (updates[f] or '') != (existing.get(f) or '')]
+            if changed_factual:
+                src = await db.aggregator_sources.find_one({'id': sid})
+                if src and src.get('trust_level') == 'trusted':
+                    await _record_demotion(
+                        sid,
+                        f"Factual correction on published notice: {', '.join(changed_factual)}",
+                    )
+                    logger.info("Source %s demoted to probationary (factual correction: %s)",
+                                sid, changed_factual)
+
     result = await db.notices.update_one({'id': notice_id}, {'$set': updates})
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Notice not found")
@@ -1051,10 +1103,9 @@ async def list_sources(admin=Depends(require_full_admin)):
         s = serialize(s)
         s.setdefault('approvals', 0)
         s.setdefault('rejections', 0)
-        s.setdefault('auto_publish_mode', 'auto')
-        s.setdefault('trust_threshold', 85)
-        s['trust_score'] = _trust_score(s['approvals'], s['rejections'])
-        s['will_auto_publish'] = _should_auto_publish(s)
+        s.setdefault('trust_level', 'new')
+        s.setdefault('consecutive_clean_approvals', 0)
+        s.setdefault('consecutive_parse_failures', 0)
         items.append(s)
     return items
 
@@ -1063,10 +1114,6 @@ async def list_sources(admin=Depends(require_full_admin)):
 async def create_source(payload: AggregatorSourceCreate, admin=Depends(require_full_admin)):
     if payload.default_type not in VALID_SOURCE_TYPES:
         raise HTTPException(status_code=400, detail="Invalid default_type")
-    if payload.auto_publish_mode not in VALID_AUTO_PUBLISH_MODES:
-        raise HTTPException(status_code=400, detail="Invalid auto_publish_mode")
-    if not (0 <= payload.trust_threshold <= 100):
-        raise HTTPException(status_code=400, detail="trust_threshold must be 0..100")
     existing = await db.aggregator_sources.find_one({'list_url': payload.list_url})
     if existing:
         raise HTTPException(status_code=409, detail="A source with this list_url already exists")
@@ -1077,6 +1124,12 @@ async def create_source(payload: AggregatorSourceCreate, admin=Depends(require_f
         'last_run_summary': None,
         'approvals': 0,
         'rejections': 0,
+        'trust_level': 'new',
+        'consecutive_clean_approvals': 0,
+        'consecutive_parse_failures': 0,
+        'last_parse_failure_at': None,
+        'last_demoted_at': None,
+        'last_demoted_reason': None,
         **payload.dict(),
     }
     await db.aggregator_sources.insert_one(doc)
@@ -1089,15 +1142,36 @@ async def update_source(source_id: str, payload: AggregatorSourceUpdate,
     updates = {k: v for k, v in payload.dict().items() if v is not None}
     if 'default_type' in updates and updates['default_type'] not in VALID_SOURCE_TYPES:
         raise HTTPException(status_code=400, detail="Invalid default_type")
-    if 'auto_publish_mode' in updates and updates['auto_publish_mode'] not in VALID_AUTO_PUBLISH_MODES:
-        raise HTTPException(status_code=400, detail="Invalid auto_publish_mode")
-    if 'trust_threshold' in updates and not (0 <= updates['trust_threshold'] <= 100):
-        raise HTTPException(status_code=400, detail="trust_threshold must be 0..100")
     result = await db.aggregator_sources.update_one({'id': source_id}, {'$set': updates})
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Source not found")
     doc = await db.aggregator_sources.find_one({'id': source_id})
     return serialize(doc)
+
+
+class TrustLevelPayload(BaseModel):
+    trust_level: str
+    reason: Optional[str] = "admin override"
+
+
+@api_router.post("/admin/aggregator/sources/{source_id}/set-trust-level")
+async def set_source_trust_level(source_id: str, payload: TrustLevelPayload,
+                                  admin=Depends(require_full_admin)):
+    """Manual admin override — promote or demote a source explicitly."""
+    if payload.trust_level not in VALID_TRUST_LEVELS:
+        raise HTTPException(status_code=400, detail=f"Invalid trust_level (must be one of {sorted(VALID_TRUST_LEVELS)})")
+    src = await db.aggregator_sources.find_one({'id': source_id})
+    if not src:
+        raise HTTPException(status_code=404, detail="Source not found")
+    updates = {'trust_level': payload.trust_level}
+    # When downgrading, reset the clean counter so the source has to earn it back.
+    levels_order = {'new': 0, 'probationary': 1, 'trusted': 2}
+    if levels_order[payload.trust_level] < levels_order.get(src.get('trust_level', 'new'), 0):
+        updates['consecutive_clean_approvals'] = 0
+        updates['last_demoted_at'] = datetime.utcnow()
+        updates['last_demoted_reason'] = payload.reason or 'admin override'
+    await db.aggregator_sources.update_one({'id': source_id}, {'$set': updates})
+    return serialize(await db.aggregator_sources.find_one({'id': source_id}))
 
 
 @api_router.post("/admin/aggregator/sources/{source_id}/reset-trust")
@@ -1150,6 +1224,15 @@ async def list_drafts(limit: int = 50, skip: int = 0,
         q['source_id'] = source_id
     cursor = db.notices.find(q).sort('posted_date', -1).skip(skip).limit(limit)
     items = [serialize(n) async for n in cursor]
+    # Join in each draft's source trust level so the queue can flag
+    # probationary "high-confidence" items for a faster scan.
+    sids = list({i.get('source_id') for i in items if i.get('source_id')})
+    levels = {}
+    if sids:
+        async for s in db.aggregator_sources.find({'id': {'$in': sids}}, {'id': 1, 'trust_level': 1}):
+            levels[s['id']] = s.get('trust_level', 'new')
+    for i in items:
+        i['source_trust_level'] = levels.get(i.get('source_id'), 'new')
     total = await db.notices.count_documents(q)
     return {'drafts': items, 'total': total}
 
@@ -1159,24 +1242,68 @@ class DraftBulkAction(BaseModel):
     action: str  # 'approve' | 'reject'
 
 
+async def _record_approval(draft: dict, admin_name: str):
+    """Approve one draft: publish, increment counters, then check for promotion.
+
+    A draft counts as a "clean" approval only when its facts were not edited
+    after ingestion (i.e. `edited_since_ingest` is falsy). Edits reset the
+    consecutive-clean counter to 0 so promotions need to be earned again.
+    """
+    was_edited = bool(draft.get('edited_since_ingest'))
+    await db.notices.update_one(
+        {'id': draft['id']},
+        {'$set': {'status': 'published', 'approved_at': datetime.utcnow(),
+                  'approved_by': admin_name, 'posted_date': datetime.utcnow(),
+                  'auto_published': False}},
+    )
+    sid = draft.get('source_id')
+    if not sid:
+        return
+    src = await db.aggregator_sources.find_one({'id': sid})
+    if not src:
+        logger.warning("approve: source %s missing", sid)
+        return
+    if was_edited:
+        # Approval still counts toward totals but breaks the clean streak.
+        await db.aggregator_sources.update_one(
+            {'id': sid},
+            {'$inc': {'approvals': 1},
+             '$set': {'consecutive_clean_approvals': 0}},
+        )
+        return
+    new_counter = (src.get('consecutive_clean_approvals', 0) or 0) + 1
+    new_level = _next_level_after_clean(
+        src.get('trust_level', 'new'), new_counter, src.get('last_parse_failure_at'),
+    )
+    set_fields = {'consecutive_clean_approvals': new_counter}
+    if new_level != src.get('trust_level', 'new'):
+        set_fields['trust_level'] = new_level
+        set_fields['promoted_at'] = datetime.utcnow()
+        logger.info("Source %s promoted: %s -> %s (cleans=%d)", sid,
+                    src.get('trust_level'), new_level, new_counter)
+    await db.aggregator_sources.update_one(
+        {'id': sid}, {'$inc': {'approvals': 1}, '$set': set_fields},
+    )
+
+
+async def _record_rejection(draft: dict):
+    sid = draft.get('source_id')
+    if not sid:
+        return
+    # Rejection breaks the clean streak too.
+    await db.aggregator_sources.update_one(
+        {'id': sid},
+        {'$inc': {'rejections': 1},
+         '$set': {'consecutive_clean_approvals': 0}},
+    )
+
+
 @api_router.post("/admin/aggregator/drafts/{draft_id}/approve")
 async def approve_draft(draft_id: str, admin=Depends(require_full_admin)):
     draft = await db.notices.find_one({'id': draft_id, 'status': 'draft'})
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
-    await db.notices.update_one(
-        {'id': draft_id},
-        {'$set': {'status': 'published', 'approved_at': datetime.utcnow(),
-                  'approved_by': admin['username'],
-                  'posted_date': datetime.utcnow()}},
-    )
-    if draft.get('source_id'):
-        r = await db.aggregator_sources.update_one(
-            {'id': draft['source_id']},
-            {'$inc': {'approvals': 1}},
-        )
-        if r.matched_count == 0:
-            logger.warning("approve_draft: source %s no longer exists; trust counter not updated", draft['source_id'])
+    await _record_approval(draft, admin['username'])
     return {'success': True}
 
 
@@ -1185,13 +1312,7 @@ async def reject_draft(draft_id: str, admin=Depends(require_full_admin)):
     draft = await db.notices.find_one({'id': draft_id, 'status': 'draft'})
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
-    if draft.get('source_id'):
-        r = await db.aggregator_sources.update_one(
-            {'id': draft['source_id']},
-            {'$inc': {'rejections': 1}},
-        )
-        if r.matched_count == 0:
-            logger.warning("reject_draft: source %s no longer exists; trust counter not updated", draft['source_id'])
+    await _record_rejection(draft)
     await db.notices.delete_one({'id': draft_id, 'status': 'draft'})
     return {'success': True}
 
@@ -1202,31 +1323,47 @@ async def bulk_draft_action(payload: DraftBulkAction, admin=Depends(require_full
         raise HTTPException(status_code=400, detail="action must be 'approve' or 'reject'")
     if not payload.ids:
         return {'success': True, 'affected': 0}
-
-    # Snapshot source_ids so we can credit/debit trust correctly even after publish/delete.
     drafts = await db.notices.find(
-        {'id': {'$in': payload.ids}, 'status': 'draft'}, {'id': 1, 'source_id': 1},
+        {'id': {'$in': payload.ids}, 'status': 'draft'},
     ).to_list(len(payload.ids))
-    source_counts: dict = {}
-    for d in drafts:
-        sid = d.get('source_id')
-        if sid:
-            source_counts[sid] = source_counts.get(sid, 0) + 1
-
+    affected = 0
     if payload.action == 'approve':
-        result = await db.notices.update_many(
-            {'id': {'$in': payload.ids}, 'status': 'draft'},
-            {'$set': {'status': 'published', 'approved_at': datetime.utcnow(),
-                      'approved_by': admin['username'], 'posted_date': datetime.utcnow()}},
-        )
-        for sid, n in source_counts.items():
-            await db.aggregator_sources.update_one({'id': sid}, {'$inc': {'approvals': n}})
-        return {'success': True, 'affected': result.modified_count}
+        for d in drafts:
+            await _record_approval(d, admin['username'])
+            affected += 1
+        return {'success': True, 'affected': affected}
+    for d in drafts:
+        await _record_rejection(d)
+        await db.notices.delete_one({'id': d['id'], 'status': 'draft'})
+        affected += 1
+    return {'success': True, 'affected': affected}
 
-    result = await db.notices.delete_many({'id': {'$in': payload.ids}, 'status': 'draft'})
-    for sid, n in source_counts.items():
-        await db.aggregator_sources.update_one({'id': sid}, {'$inc': {'rejections': n}})
-    return {'success': True, 'affected': result.deleted_count}
+
+# --------- Auto-publish log (Trusted-source items that skipped the queue) ---------
+@api_router.get("/admin/aggregator/auto-publish-log")
+async def auto_publish_log(limit: int = 50, admin=Depends(require_full_admin)):
+    """Recent auto-published items + the demote/undo affordances the admin needs."""
+    cursor = db.notices.find(
+        {'auto_published': True, 'status': 'published'},
+    ).sort('approved_at', -1).limit(min(max(limit, 1), 200))
+    items = [serialize(n) async for n in cursor]
+    return {'items': items, 'total': await db.notices.count_documents({'auto_published': True, 'status': 'published'})}
+
+
+@api_router.post("/admin/aggregator/auto-publish/{notice_id}/undo")
+async def undo_auto_publish(notice_id: str, admin=Depends(require_full_admin)):
+    """Unpublish + delete a trusted-source auto-publish AND demote the source.
+    The dedup_key is preserved on the source's run history but the notice is
+    removed so the URL can be re-ingested.
+    """
+    notice = await db.notices.find_one({'id': notice_id, 'auto_published': True})
+    if not notice:
+        raise HTTPException(status_code=404, detail="Auto-publish entry not found")
+    sid = notice.get('source_id')
+    await db.notices.delete_one({'id': notice_id})
+    if sid:
+        await _record_demotion(sid, 'Admin undid an auto-publish')
+    return {'success': True, 'demoted_source_id': sid}
 
 
 @api_router.get("/admin/aggregator/settings")

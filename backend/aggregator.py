@@ -278,29 +278,16 @@ async def _is_fuzzy_duplicate(db, title: str, organization: str,
 
 # -------------------- RUN --------------------
 TRUST_MIN_DECISIONS = 5
+CONSECUTIVE_PARSE_FAILURES_DEMOTION = 2
 
 
 def should_auto_publish(source: Dict[str, Any]) -> bool:
-    """Per-source graduated-trust decision (used by candidate_to_notice).
+    """Trusted sources auto-publish; everything else queues for review.
 
-    Modes:
-      - 'always'  : publish immediately, regardless of trust.
-      - 'never'   : always queue as draft for admin review.
-      - 'auto'    : publish only if trust_score >= trust_threshold AND at
-                    least TRUST_MIN_DECISIONS decisions have been made.
+    The level transitions are managed by the server-side approve/reject/edit
+    handlers — this function is the pure ingestion-time decision.
     """
-    mode = (source or {}).get('auto_publish_mode', 'auto')
-    if mode == 'always':
-        return True
-    if mode == 'never':
-        return False
-    approvals = source.get('approvals', 0) or 0
-    rejections = source.get('rejections', 0) or 0
-    total = approvals + rejections
-    if total < TRUST_MIN_DECISIONS:
-        return False
-    score = round(100 * approvals / total) if total else 0
-    return score >= int(source.get('trust_threshold', 85) or 85)
+    return (source or {}).get('trust_level') == 'trusted'
 
 
 def candidate_to_notice(candidate: Dict[str, Any],
@@ -355,6 +342,11 @@ def candidate_to_notice(candidate: Dict[str, Any],
         'department': facts['department'],
         'posted_date': datetime.utcnow(),
         'views': 0,
+        # Trust-state-machine flags
+        'edited_since_ingest': False,
+        'auto_published': bool(auto),
+        'approved_at': datetime.utcnow() if auto else None,
+        'approved_by': 'aggregator-trusted-auto' if auto else None,
     }
     return notice, facts
 
@@ -423,17 +415,32 @@ async def _finalize(db, source: Dict[str, Any], summary: Dict[str, Any],
     # Persist the run log
     run_doc = {'id': str(uuid.uuid4()), 'run_at': started, **summary}
     await db.aggregator_runs.insert_one(run_doc)
-    # Snapshot last status on source
-    await db.aggregator_sources.update_one(
-        {'id': source['id']},
-        {'$set': {
-            'last_run_at': started,
-            'last_run_summary': {k: summary[k] for k in
-                                 ('fetched', 'new_drafts', 'new_published',
-                                  'skipped_url_dup', 'skipped_fuzzy_dup',
-                                  'errors', 'parse_failed')},
-        }},
-    )
+
+    # Update parse-failure streak + maybe auto-demote a Trusted source.
+    cur = await db.aggregator_sources.find_one({'id': source['id']})
+    set_fields: Dict[str, Any] = {
+        'last_run_at': started,
+        'last_run_summary': {k: summary[k] for k in
+                             ('fetched', 'new_drafts', 'new_published',
+                              'skipped_url_dup', 'skipped_fuzzy_dup',
+                              'errors', 'parse_failed')},
+    }
+    if summary['parse_failed']:
+        set_fields['consecutive_parse_failures'] = (cur or {}).get('consecutive_parse_failures', 0) + 1
+        set_fields['last_parse_failure_at'] = datetime.utcnow()
+        # Trusted sources demote on 2 parse failures in a row.
+        if (cur or {}).get('trust_level') == 'trusted' and \
+                set_fields['consecutive_parse_failures'] >= CONSECUTIVE_PARSE_FAILURES_DEMOTION:
+            set_fields['trust_level'] = 'probationary'
+            set_fields['consecutive_clean_approvals'] = 0
+            set_fields['last_demoted_at'] = datetime.utcnow()
+            set_fields['last_demoted_reason'] = (
+                f"{set_fields['consecutive_parse_failures']} consecutive parse failures"
+            )
+            summary['demoted'] = True
+    else:
+        set_fields['consecutive_parse_failures'] = 0
+    await db.aggregator_sources.update_one({'id': source['id']}, {'$set': set_fields})
     return summary
 
 

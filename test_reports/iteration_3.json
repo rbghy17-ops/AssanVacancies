@@ -1,0 +1,24 @@
+{
+  "summary": "P3 — Trust state-machine (new/probationary/trusted) FULL backend+frontend testing PASSED. All 8 canonical state-machine assertions in /app/backend/tests/test_trust_state_machine.py PASS end-to-end against the live API: (1) ingestion routing by level [new+probationary -> draft, trusted -> published+auto_published], (2) 10 cleans new->probationary, (3) 25 cleans probationary->trusted, (4) edit-then-approve resets streak (no promo), (5) reject resets streak, (6) 2 consecutive parse failures trusted->probationary (1 failure alone does NOT demote), (7) post-publish factual correction (vacancy_count) demotes trusted->probationary with last_demoted_reason mentioning the field, (8) auto-publish log + undo deletes notice AND demotes source. API contract verified: /admin/aggregator/sources exposes trust_level, consecutive_clean_approvals, consecutive_parse_failures, approvals, rejections, last_parse_failure_at, last_demoted_at, last_demoted_reason; OLD fields auto_publish_mode / trust_threshold / trust_score are GONE. /admin/aggregator/drafts items are enriched with source_trust_level (server.py:1235). /admin/aggregator/auto-publish-log returns 200. Frontend UI verified via Playwright: level-badge-new x2 visible (APSC+SLPRB both at 'new'), Streak hint 'Streak: X / 10 clean approvals to promote' rendered, promote arrows visible on both new sources (2/2), demote arrows correctly hidden for new sources (0/2), agg-tab-autolog tab present with agg-autolog-empty text 'No trusted-source auto-publishes yet.', and the OLD 'Graduated trust' section in the source-edit dialog (agg-src-mode / agg-src-threshold / 'Graduated trust' heading) is REMOVED. hc-flag wiring confirmed in code (only renders when source_trust_level==='probationary'); review queue currently has 0 drafts so flag was not visually rendered in this run but logic is correct.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": { "ui_bugs": [], "integration_issues": [], "design_issues": [] },
+  "test_report_links": [
+    "/app/backend/tests/test_trust_state_machine.py",
+    "/app/backend/tests/test_aggregator_fixture.py"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "AggregatorPanel.jsx is now 755 lines — past the 700-line soft limit. The Sources tab, EditDialog and Auto-publish log content should be extracted into separate components.",
+    "server.py still contains both /admin/aggregator/auto-publish-log read endpoint and the demotion/undo logic inline. Consider extracting trust-state-machine helpers (_next_level_after_clean, _record_demotion, FACTUAL_FIELDS) into a small module /app/backend/trust_state.py for testability and to reduce server.py weight.",
+    "approve_draft/reject_draft increment counters with update_one (no upsert). If a source row is deleted while drafts exist, the counter update silently no-ops. Low-risk; log a warning when matched_count==0.",
+    "Old test files test_aggregator_trust_api.py and test_aggregator_trust.py referenced in iteration_2 are deleted (correct — they tested removed features). The canonical regression set is test_trust_state_machine.py + test_aggregator_fixture.py."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "100%", "frontend": "100%" },
+  "test_credentials": "Tests used admin/TestAggr@123 during the run. Restored to admin/admin with must_reset=true at the end. /app/memory/test_credentials.md left unchanged.",
+  "seed_data_creation": "test_trust_state_machine.py creates ephemeral TEST_SM_* sources + TEST SM drafts and cleans them via per-test cleanup(). Post-run DB verified: only APSC + SLPRB seeded sources remain (both at trust_level=new, counters at 0/0). No leftover TEST_ data.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Canonical regression test = /app/backend/tests/test_trust_state_machine.py (run as `python tests/test_trust_state_machine.py` from /app/backend; it self-resets the admin password to TestAggr@123 then exercises all 8 state-machine cases via the public API + motor). UI testids for any future trust-related work: level-badge-{new|probationary|trusted}, hc-flag, agg-tab-autolog, agg-autolog-empty, agg-autolog-undo-{id}, autolog-row-{id}, agg-source-promote-{id}, agg-source-demote-{id}, agg-source-reset-trust-{id}. The Source edit dialog no longer has agg-src-mode / agg-src-threshold inputs — if these are needed back, reintroduce them only in EditDialog. NEXT_GOAL map = {new:10, probationary:25, trusted:null}.",
+  "rca of the issue": "N/A — no failures."
+}
