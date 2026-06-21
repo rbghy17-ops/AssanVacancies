@@ -1071,11 +1071,62 @@ async def list_runs(limit: int = 50, admin=Depends(require_full_admin)):
 
 
 @api_router.get("/admin/aggregator/drafts")
-async def list_drafts(limit: int = 50, skip: int = 0, admin=Depends(require_full_admin)):
-    cursor = db.notices.find({'status': 'draft'}).sort('posted_date', -1).skip(skip).limit(limit)
+async def list_drafts(limit: int = 50, skip: int = 0,
+                       source_id: Optional[str] = None,
+                       admin=Depends(require_full_admin)):
+    q = {'status': 'draft'}
+    if source_id:
+        q['source_id'] = source_id
+    cursor = db.notices.find(q).sort('posted_date', -1).skip(skip).limit(limit)
     items = [serialize(n) async for n in cursor]
-    total = await db.notices.count_documents({'status': 'draft'})
+    total = await db.notices.count_documents(q)
     return {'drafts': items, 'total': total}
+
+
+class DraftBulkAction(BaseModel):
+    ids: List[str]
+    action: str  # 'approve' | 'reject'
+
+
+@api_router.post("/admin/aggregator/drafts/{draft_id}/approve")
+async def approve_draft(draft_id: str, admin=Depends(require_full_admin)):
+    result = await db.notices.update_one(
+        {'id': draft_id, 'status': 'draft'},
+        {'$set': {'status': 'published', 'approved_at': datetime.utcnow(),
+                  'approved_by': admin['username'],
+                  # refresh posted_date so it appears at the top of public feeds
+                  'posted_date': datetime.utcnow()}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    return {'success': True}
+
+
+@api_router.post("/admin/aggregator/drafts/{draft_id}/reject")
+async def reject_draft(draft_id: str, admin=Depends(require_full_admin)):
+    # Hard-delete rejected drafts. Their `dedup_key` stays out so the next
+    # aggregator run can re-pick the same URL if the admin changes their mind.
+    result = await db.notices.delete_one({'id': draft_id, 'status': 'draft'})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    return {'success': True}
+
+
+@api_router.post("/admin/aggregator/drafts/bulk")
+async def bulk_draft_action(payload: DraftBulkAction, admin=Depends(require_full_admin)):
+    if payload.action not in ('approve', 'reject'):
+        raise HTTPException(status_code=400, detail="action must be 'approve' or 'reject'")
+    if not payload.ids:
+        return {'success': True, 'affected': 0}
+    if payload.action == 'approve':
+        result = await db.notices.update_many(
+            {'id': {'$in': payload.ids}, 'status': 'draft'},
+            {'$set': {'status': 'published', 'approved_at': datetime.utcnow(),
+                      'approved_by': admin['username'], 'posted_date': datetime.utcnow()}},
+        )
+        return {'success': True, 'affected': result.modified_count}
+    result = await db.notices.delete_many({'id': {'$in': payload.ids}, 'status': 'draft'})
+    return {'success': True, 'affected': result.deleted_count}
 
 
 @api_router.get("/admin/aggregator/settings")

@@ -13,10 +13,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Switch } from '../components/ui/switch';
 import { Badge } from '../components/ui/badge';
-import { LogOut, Plus, Pencil, Trash2, Briefcase, BarChart3, Mail, FileText, Search, Shield, KeyRound, Check, XCircle, Lock, Megaphone, LineChart, ExternalLink, TrendingUp } from 'lucide-react';
+import { LogOut, Plus, Pencil, Trash2, Briefcase, BarChart3, Mail, FileText, Search, Shield, KeyRound, Check, XCircle, Lock, Megaphone, LineChart, ExternalLink, TrendingUp, Rss } from 'lucide-react';
 import { toast } from '../hooks/use-toast';
 import { DISTRICTS, CATEGORIES, SECTIONS } from '../lib/constants';
 import { computeNoticeStatus } from '../lib/noticeStatus';
+import AggregatorPanel from '../components/AggregatorPanel';
 
 const TYPES = SECTIONS.map(s => ({ key: s.key, label: s.label }));
 
@@ -247,6 +248,7 @@ const AdminDashboard = () => {
       <Tabs defaultValue="notices">
         <TabsList className="bg-purple-100 flex flex-wrap h-auto">
           <TabsTrigger value="notices">Notices</TabsTrigger>
+          <TabsTrigger value="aggregator" data-testid="admin-tab-aggregator"><Rss className="w-3.5 h-3.5 mr-1" /> Aggregator</TabsTrigger>
           <TabsTrigger value="messages">Messages</TabsTrigger>
           <TabsTrigger value="analytics">Analytics</TabsTrigger>
           <TabsTrigger value="ads"><Megaphone className="w-3.5 h-3.5 mr-1" /> Ads</TabsTrigger>
@@ -313,6 +315,10 @@ const AdminDashboard = () => {
               </table>
             </div>
           </div>
+        </TabsContent>
+
+        <TabsContent value="aggregator" className="mt-4">
+          <AggregatorPanel />
         </TabsContent>
 
         <TabsContent value="messages" className="mt-4">

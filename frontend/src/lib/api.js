@@ -44,3 +44,18 @@ export const deleteNotice = (id) => api.delete(`/admin/notices/${id}`).then(r =>
 export const listContacts = () => api.get('/admin/contacts').then(r => r.data);
 export const deleteContact = (id) => api.delete(`/admin/contacts/${id}`).then(r => r.data);
 export const fetchActivity = () => api.get('/admin/activity').then(r => r.data);
+
+// Aggregator
+export const aggSources = () => api.get('/admin/aggregator/sources').then(r => r.data);
+export const aggCreateSource = (data) => api.post('/admin/aggregator/sources', data).then(r => r.data);
+export const aggUpdateSource = (id, data) => api.put(`/admin/aggregator/sources/${id}`, data).then(r => r.data);
+export const aggDeleteSource = (id) => api.delete(`/admin/aggregator/sources/${id}`).then(r => r.data);
+export const aggRunSource = (id) => api.post(`/admin/aggregator/sources/${id}/run`).then(r => r.data);
+export const aggRunAll = () => api.post('/admin/aggregator/run-all').then(r => r.data);
+export const aggRuns = (limit = 50) => api.get('/admin/aggregator/runs', { params: { limit } }).then(r => r.data);
+export const aggDrafts = (params = {}) => api.get('/admin/aggregator/drafts', { params }).then(r => r.data);
+export const aggApproveDraft = (id) => api.post(`/admin/aggregator/drafts/${id}/approve`).then(r => r.data);
+export const aggRejectDraft = (id) => api.post(`/admin/aggregator/drafts/${id}/reject`).then(r => r.data);
+export const aggBulkDrafts = (data) => api.post('/admin/aggregator/drafts/bulk', data).then(r => r.data);
+export const aggGetSettings = () => api.get('/admin/aggregator/settings').then(r => r.data);
+export const aggUpdateSettings = (data) => api.put('/admin/aggregator/settings', data).then(r => r.data);
