@@ -277,6 +277,9 @@ async def _is_fuzzy_duplicate(db, title: str, organization: str,
 
 
 # -------------------- RUN --------------------
+TRUST_MIN_DECISIONS = 5
+
+
 def should_auto_publish(source: Dict[str, Any]) -> bool:
     """Per-source graduated-trust decision (used by candidate_to_notice).
 
@@ -298,9 +301,6 @@ def should_auto_publish(source: Dict[str, Any]) -> bool:
         return False
     score = round(100 * approvals / total) if total else 0
     return score >= int(source.get('trust_threshold', 85) or 85)
-
-
-TRUST_MIN_DECISIONS = 5
 
 
 def candidate_to_notice(candidate: Dict[str, Any],

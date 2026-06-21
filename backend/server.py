@@ -1171,10 +1171,12 @@ async def approve_draft(draft_id: str, admin=Depends(require_full_admin)):
                   'posted_date': datetime.utcnow()}},
     )
     if draft.get('source_id'):
-        await db.aggregator_sources.update_one(
+        r = await db.aggregator_sources.update_one(
             {'id': draft['source_id']},
             {'$inc': {'approvals': 1}},
         )
+        if r.matched_count == 0:
+            logger.warning("approve_draft: source %s no longer exists; trust counter not updated", draft['source_id'])
     return {'success': True}
 
 
@@ -1184,10 +1186,12 @@ async def reject_draft(draft_id: str, admin=Depends(require_full_admin)):
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
     if draft.get('source_id'):
-        await db.aggregator_sources.update_one(
+        r = await db.aggregator_sources.update_one(
             {'id': draft['source_id']},
             {'$inc': {'rejections': 1}},
         )
+        if r.matched_count == 0:
+            logger.warning("reject_draft: source %s no longer exists; trust counter not updated", draft['source_id'])
     await db.notices.delete_one({'id': draft_id, 'status': 'draft'})
     return {'success': True}
 
