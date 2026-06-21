@@ -382,7 +382,7 @@ def _next_level_after_clean(level: str, counter: int,
 
 async def _record_demotion(source_id: str, reason: str):
     """Drop a trusted source back to probationary and reset its clean counter."""
-    await db.aggregator_sources.update_one(
+    r = await db.aggregator_sources.update_one(
         {'id': source_id, 'trust_level': 'trusted'},
         {'$set': {
             'trust_level': 'probationary',
@@ -391,6 +391,9 @@ async def _record_demotion(source_id: str, reason: str):
             'last_demoted_reason': reason,
         }},
     )
+    if r.matched_count == 0:
+        # Either the source no longer exists, or it wasn't trusted to begin with — fine.
+        logger.info("Demotion skipped for %s (no trusted match): %s", source_id, reason)
 
 
 # -------------------- AGGREGATOR: scheduler & seed --------------------
