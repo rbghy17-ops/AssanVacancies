@@ -9,8 +9,13 @@ import NoticeDetail from './pages/NoticeDetail';
 import ListPage from './pages/ListPage';
 import Contact from './pages/Contact';
 import About from './pages/About';
+import PrivacyPolicy from './pages/PrivacyPolicy';
+import TermsConditions from './pages/TermsConditions';
+import Disclaimer from './pages/Disclaimer';
 import AdminLogin from './pages/AdminLogin';
 import AdminDashboard from './pages/AdminDashboard';
+import CookieConsent from './components/CookieConsent';
+import ConsentScripts from './components/ConsentScripts';
 import { Toaster } from './components/ui/toaster';
 
 const Layout = ({ children }) => {
@@ -54,10 +59,17 @@ function App() {
             <Route path="/search" element={<ListPage />} />
             <Route path="/contact" element={<Contact />} />
             <Route path="/about" element={<About />} />
+            <Route path="/privacy" element={<PrivacyPolicy />} />
+            <Route path="/privacy-policy" element={<Navigate to="/privacy" replace />} />
+            <Route path="/terms" element={<TermsConditions />} />
+            <Route path="/terms-conditions" element={<Navigate to="/terms" replace />} />
+            <Route path="/disclaimer" element={<Disclaimer />} />
             <Route path="/admin/login" element={<AdminLogin />} />
             <Route path="/admin" element={<AdminDashboard />} />
           </Routes>
         </Layout>
+        <CookieConsent />
+        <ConsentScripts />
         <Toaster />
       </BrowserRouter>
     </AuthProvider>

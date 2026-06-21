@@ -24,28 +24,30 @@ const Footer = () => (
         </ul>
       </div>
       <div>
-        <h4 className="text-white font-bold mb-3">Quick Links</h4>
+        <h4 className="text-white font-bold mb-3">Information</h4>
         <ul className="space-y-2 text-sm">
-          <li><Link to="/" className="hover:text-white">Home</Link></li>
-          <li><Link to="/about" className="hover:text-white">About</Link></li>
+          <li><Link to="/about" className="hover:text-white">About Us</Link></li>
           <li><Link to="/contact" className="hover:text-white">Contact</Link></li>
+          <li><Link to="/privacy" className="hover:text-white">Privacy Policy</Link></li>
+          <li><Link to="/terms" className="hover:text-white">Terms &amp; Conditions</Link></li>
+          <li><Link to="/disclaimer" className="hover:text-white">Disclaimer</Link></li>
           <li><Link to="/admin/login" className="hover:text-white">Admin</Link></li>
         </ul>
       </div>
       <div>
         <h4 className="text-white font-bold mb-3">Connect</h4>
         <div className="flex items-center gap-2 mb-2">
-          <a href="#" className="w-9 h-9 rounded bg-purple-800 hover:bg-purple-700 flex items-center justify-center"><Facebook className="w-4 h-4" /></a>
-          <a href="#" className="w-9 h-9 rounded bg-purple-800 hover:bg-purple-700 flex items-center justify-center"><Twitter className="w-4 h-4" /></a>
-          <a href="#" className="w-9 h-9 rounded bg-purple-800 hover:bg-purple-700 flex items-center justify-center"><Send className="w-4 h-4" /></a>
-          <a href="#" className="w-9 h-9 rounded bg-purple-800 hover:bg-purple-700 flex items-center justify-center"><Youtube className="w-4 h-4" /></a>
+          <a href="#" aria-label="Facebook" className="w-9 h-9 rounded bg-purple-800 hover:bg-purple-700 flex items-center justify-center"><Facebook className="w-4 h-4" /></a>
+          <a href="#" aria-label="Twitter" className="w-9 h-9 rounded bg-purple-800 hover:bg-purple-700 flex items-center justify-center"><Twitter className="w-4 h-4" /></a>
+          <a href="#" aria-label="Telegram" className="w-9 h-9 rounded bg-purple-800 hover:bg-purple-700 flex items-center justify-center"><Send className="w-4 h-4" /></a>
+          <a href="#" aria-label="YouTube" className="w-9 h-9 rounded bg-purple-800 hover:bg-purple-700 flex items-center justify-center"><Youtube className="w-4 h-4" /></a>
         </div>
         <div className="flex items-center gap-2 text-sm text-purple-200 mt-3"><Mail className="w-4 h-4" /> contact@assamvacancies.com</div>
         <div className="flex items-center gap-2 text-sm text-purple-200 mt-1"><MapPin className="w-4 h-4" /> Guwahati, Assam, India</div>
       </div>
     </div>
-    <div className="border-t border-purple-900 py-4 text-center text-xs text-purple-300">
-      &copy; {new Date().getFullYear()} AssamVacancies.com | All Rights Reserved | Disclaimer: This is a private informational website.
+    <div className="border-t border-purple-900 py-4 text-center text-xs text-purple-300 px-4">
+      &copy; {new Date().getFullYear()} AssamVacancies.com &middot; All Rights Reserved &middot; An independent information service, not affiliated with any government body. See our <Link to="/disclaimer" className="underline hover:text-white">Disclaimer</Link>.
     </div>
   </footer>
 );

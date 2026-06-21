@@ -1,43 +1,76 @@
 import React from 'react';
-import SeoMeta from '../components/SeoMeta';
-import { Briefcase, Target, Users, Award } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import LegalPage, { LegalSection, LegalList } from '../components/LegalPage';
 
 const About = () => (
-  <div className="max-w-7xl mx-auto px-4 py-8">
-    <SeoMeta title="About Us" description="AssamVacancies.com is your trusted source for the latest government and private jobs, admit cards, results and answer keys across all 35 districts of Assam." />
-    <div className="bg-gradient-to-r from-purple-700 to-purple-900 text-white rounded-xl p-8 mb-6">
-      <h1 className="text-3xl md:text-4xl font-extrabold title-font">About AssamVacancies.com</h1>
-      <p className="text-purple-100 mt-2 max-w-3xl">Your trusted source for the latest government and private job updates, admit cards, results, scholarships and admission notifications across Assam and Northeast India.</p>
-    </div>
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-      <div className="bg-white border border-purple-100 rounded-xl p-6">
-        <Target className="w-8 h-8 text-purple-700 mb-3" />
-        <h2 className="font-bold text-lg text-purple-900 mb-2">Our Mission</h2>
-        <p className="text-gray-700 text-sm leading-relaxed">To empower job seekers in Assam by providing timely, accurate and comprehensive information about employment opportunities, exams and academic notifications.</p>
-      </div>
-      <div className="bg-white border border-purple-100 rounded-xl p-6">
-        <Users className="w-8 h-8 text-purple-700 mb-3" />
-        <h2 className="font-bold text-lg text-purple-900 mb-2">Who We Serve</h2>
-        <p className="text-gray-700 text-sm leading-relaxed">Students, freshers, working professionals and aspirants across Assam looking for verified job notifications from government departments, PSUs, private companies and educational boards.</p>
-      </div>
-      <div className="bg-white border border-purple-100 rounded-xl p-6">
-        <Briefcase className="w-8 h-8 text-purple-700 mb-3" />
-        <h2 className="font-bold text-lg text-purple-900 mb-2">What We Offer</h2>
-        <ul className="text-gray-700 text-sm leading-relaxed list-disc ml-5 space-y-1">
-          <li>Latest job notifications &amp; recruitment alerts</li>
-          <li>Admit card downloads &amp; exam schedules</li>
-          <li>Results &amp; answer keys</li>
-          <li>Scholarship &amp; admission updates</li>
-          <li>Career guidance &amp; tips</li>
-        </ul>
-      </div>
-      <div className="bg-white border border-purple-100 rounded-xl p-6">
-        <Award className="w-8 h-8 text-purple-700 mb-3" />
-        <h2 className="font-bold text-lg text-purple-900 mb-2">Why Trust Us</h2>
-        <p className="text-gray-700 text-sm leading-relaxed">All notifications are curated from official sources. We ensure timely updates so candidates never miss a deadline. Disclaimer: This site is a private informational portal and is not affiliated with any government body.</p>
-      </div>
-    </div>
-  </div>
+  <LegalPage
+    title="About AssamVacancies.com"
+    subtitle="An independent information service for job seekers across Assam and the Northeast"
+    lastUpdated="2025-07-01"
+    seoDescription="AssamVacancies.com is an independent information service that aggregates verified job notifications, admit cards, results and answer keys for all 35 districts of Assam."
+  >
+    <LegalSection id="mission" heading="Our mission">
+      <p>
+        AssamVacancies.com was started with one simple goal: make it easier for job seekers in
+        Assam and the Northeast to <strong>find verified, well-organised information</strong>
+        {' '}about government and private recruitment, admit cards, results, answer keys,
+        admissions and scholarships, without having to chase a dozen different official sites
+        every day.
+      </p>
+    </LegalSection>
+
+    <LegalSection id="what-we-cover" heading="What we cover">
+      <p>We publish notifications across four content sections:</p>
+      <LegalList items={[
+        <><Link to="/jobs" className="text-purple-700 underline">Jobs</Link> — recruitment notifications from government departments, public-sector undertakings, banks, defence forces, railways, police forces and reputable private employers.</>,
+        <><Link to="/admit-card" className="text-purple-700 underline">Admit cards</Link> — download links and release announcements from recruiting bodies and examination boards.</>,
+        <><Link to="/result" className="text-purple-700 underline">Results</Link> — announcements covering recruitment exams, board results and selection lists.</>,
+        <><Link to="/answer-key" className="text-purple-700 underline">Answer keys</Link> — official and provisional answer keys, with deadlines for raising objections where applicable.</>,
+      ]} />
+      <p>
+        Listings are tagged by category (Government, Private, Defence, Banking, Railway, Teaching,
+        Police) and by district so you can quickly narrow to what's relevant to you.
+      </p>
+    </LegalSection>
+
+    <LegalSection id="coverage" heading="Geographic coverage">
+      <p>
+        Although our editorial focus is Assam — covering all 35 districts — we also publish
+        all-India and Northeast-wide notifications that affect candidates from the region.
+      </p>
+    </LegalSection>
+
+    <LegalSection id="how-we-work" heading="How we work">
+      <p>
+        Every notification is curated from the official source. We summarise the key facts —
+        vacancies, eligibility, important dates, application links — and link straight back to
+        the official notification PDF and application portal so you can verify every detail
+        before applying.
+      </p>
+      <p>
+        Notices automatically expire from active listings the day after their last date passes,
+        but their pages remain available for archival reference.
+      </p>
+    </LegalSection>
+
+    <LegalSection id="independence" heading="Independence">
+      <p>
+        AssamVacancies.com is an independent privately-run information service. We are not a
+        government portal, are not affiliated with any recruiting authority, and never charge
+        candidates a fee. See our{' '}
+        <Link to="/disclaimer" className="text-purple-700 underline">Disclaimer</Link>{' '}
+        for details.
+      </p>
+    </LegalSection>
+
+    <LegalSection id="contact" heading="Get in touch">
+      <p>
+        Spotted an error, want to suggest a notification we missed, or have a question? Reach
+        out via our{' '}
+        <Link to="/contact" className="text-purple-700 underline">Contact</Link> page.
+      </p>
+    </LegalSection>
+  </LegalPage>
 );
 
 export default About;

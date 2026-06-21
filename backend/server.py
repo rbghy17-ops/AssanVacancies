@@ -581,6 +581,9 @@ async def sitemap_xml(request: Request):
         ('/answer-key', 'daily', '0.9'),
         ('/about', 'monthly', '0.5'),
         ('/contact', 'monthly', '0.5'),
+        ('/privacy', 'yearly', '0.3'),
+        ('/terms', 'yearly', '0.3'),
+        ('/disclaimer', 'yearly', '0.3'),
     ]
 
     lines = ['<?xml version="1.0" encoding="UTF-8"?>',
