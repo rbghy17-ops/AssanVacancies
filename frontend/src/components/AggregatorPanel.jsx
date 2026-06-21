@@ -70,17 +70,23 @@ export default function AggregatorPanel() {
       const [s, r, st] = await Promise.all([aggSources(), aggRuns(25), aggGetSettings()]);
       setSources(s); setRuns(r); setSettings(st);
       await refreshDrafts(sourceFilter);
-    } catch (e) { /* noop */ }
+    } catch (e) {
+      toast({ title: 'Failed to load aggregator data', variant: 'destructive' });
+    }
     finally { setLoading(false); }
   };
 
   const refreshDrafts = async (sf = sourceFilter) => {
-    const params = { limit: 100 };
-    if (sf && sf !== 'all') params.source_id = sf;
-    const d = await aggDrafts(params);
-    setDrafts(d.drafts || []);
-    setDraftsTotal(d.total || 0);
-    setSelectedIds([]);
+    try {
+      const params = { limit: 100 };
+      if (sf && sf !== 'all') params.source_id = sf;
+      const d = await aggDrafts(params);
+      setDrafts(d.drafts || []);
+      setDraftsTotal(d.total || 0);
+      setSelectedIds([]);
+    } catch (e) {
+      toast({ title: 'Failed to load drafts', variant: 'destructive' });
+    }
   };
 
   useEffect(() => { refreshAll(); /* eslint-disable-next-line */ }, []);
@@ -158,22 +164,34 @@ export default function AggregatorPanel() {
     setSelectedIds((prev) => prev.length === drafts.length ? [] : drafts.map(d => d.id));
   };
   const approveOne = async (d) => {
-    await aggApproveDraft(d.id);
-    toast({ title: 'Approved & published', description: d.title.slice(0, 80) });
-    refreshDrafts();
+    try {
+      await aggApproveDraft(d.id);
+      toast({ title: 'Approved & published', description: d.title.slice(0, 80) });
+      refreshDrafts();
+    } catch (e) {
+      toast({ title: 'Approve failed', variant: 'destructive' });
+    }
   };
   const rejectOne = async (d) => {
     if (!window.confirm('Reject and delete this draft?')) return;
-    await aggRejectDraft(d.id);
-    toast({ title: 'Rejected' });
-    refreshDrafts();
+    try {
+      await aggRejectDraft(d.id);
+      toast({ title: 'Rejected' });
+      refreshDrafts();
+    } catch (e) {
+      toast({ title: 'Reject failed', variant: 'destructive' });
+    }
   };
   const bulkAction = async (action) => {
     if (selectedIds.length === 0) return;
     if (action === 'reject' && !window.confirm(`Reject ${selectedIds.length} draft(s)?`)) return;
-    const r = await aggBulkDrafts({ ids: selectedIds, action });
-    toast({ title: `Bulk ${action} done`, description: `${r.affected} item(s) affected` });
-    refreshDrafts();
+    try {
+      const r = await aggBulkDrafts({ ids: selectedIds, action });
+      toast({ title: `Bulk ${action} done`, description: `${r.affected} item(s) affected` });
+      refreshDrafts();
+    } catch (e) {
+      toast({ title: `Bulk ${action} failed`, variant: 'destructive' });
+    }
   };
   const openEditDraft = (d) => {
     setDraftEditing(d);
