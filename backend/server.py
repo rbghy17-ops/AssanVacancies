@@ -145,7 +145,36 @@ class AdSettings(BaseModel):
     disabled_paths: List[str] = []
 
 
+class SiteVerification(BaseModel):
+    google_site_verification: str = ""
+
+
 DEFAULT_DISABLED_AD_PATHS = ['/privacy', '/terms', '/disclaimer', '/contact']
+
+# GA4 Data API configuration
+GA4_PROPERTY_ID = os.environ.get('GA4_PROPERTY_ID', '')
+GA4_CREDENTIALS_PATH = os.environ.get('GA4_CREDENTIALS_PATH', '')
+
+_ga4_client = None
+def get_ga4_client():
+    """Lazy GA4 client init so the rest of the API works even without GA4 creds."""
+    global _ga4_client
+    if _ga4_client is not None:
+        return _ga4_client
+    if not GA4_PROPERTY_ID or not GA4_CREDENTIALS_PATH or not os.path.exists(GA4_CREDENTIALS_PATH):
+        return None
+    try:
+        from google.analytics.data_v1beta import BetaAnalyticsDataClient  # noqa: WPS433
+        from google.oauth2 import service_account  # noqa: WPS433
+        creds = service_account.Credentials.from_service_account_file(
+            GA4_CREDENTIALS_PATH,
+            scopes=['https://www.googleapis.com/auth/analytics.readonly'],
+        )
+        _ga4_client = BetaAnalyticsDataClient(credentials=creds)
+        return _ga4_client
+    except Exception as e:  # pragma: no cover
+        logging.getLogger(__name__).warning(f"GA4 client init failed: {e}")
+        return None
 
 
 class PasswordChangeRequest(BaseModel):
@@ -603,6 +632,155 @@ async def ads_txt():
         "google.com, pub-XXXXXXXXXXXXXXXX, DIRECT, f08c47fec0942fa0\n"
     )
     return Response(body, media_type='text/plain')
+
+
+# -------------------- SITE VERIFICATION (Search Console) --------------------
+@api_router.get("/site/verification")
+async def get_site_verification():
+    """Public: lets the frontend render the <meta name=\"google-site-verification\"> tag."""
+    doc = await db.site_settings.find_one({'_key': 'verification'})
+    return {
+        'google_site_verification': (doc or {}).get('google_site_verification', ''),
+    }
+
+
+@api_router.put("/admin/site/verification")
+async def update_site_verification(payload: SiteVerification, admin=Depends(require_full_admin)):
+    token = (payload.google_site_verification or '').strip()
+    await db.site_settings.update_one(
+        {'_key': 'verification'},
+        {'$set': {'_key': 'verification', 'google_site_verification': token}},
+        upsert=True,
+    )
+    return {'google_site_verification': token}
+
+
+# -------------------- ADMIN: GA4 ANALYTICS WIDGETS --------------------
+@api_router.get("/admin/analytics/dashboard")
+async def analytics_dashboard(admin=Depends(require_full_admin)):
+    """
+    Single combined GA4 Data API call returning data for both admin widgets:
+      - top_notices: top viewed /notice/<id> pages, last 7 and last 30 days
+      - traffic_sources: session breakdown by default channel group, last 30 days
+
+    Uses batchRunReports so all three reports come back in one round trip.
+    """
+    client = get_ga4_client()
+    if not client:
+        raise HTTPException(
+            status_code=503,
+            detail="GA4 Data API is not configured. Set GA4_PROPERTY_ID and GA4_CREDENTIALS_PATH.",
+        )
+
+    try:
+        from google.analytics.data_v1beta.types import (  # noqa: WPS433
+            BatchRunReportsRequest, RunReportRequest, DateRange,
+            Dimension, Metric, Filter, FilterExpression, OrderBy,
+        )
+    except ImportError as e:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=f"GA4 SDK not available: {e}")
+
+    property_path = f"properties/{GA4_PROPERTY_ID}"
+
+    # Filter for notice detail pages only (pagePath begins with /notice/)
+    notice_filter = FilterExpression(
+        filter=Filter(
+            field_name='pagePath',
+            string_filter=Filter.StringFilter(
+                value='/notice/', match_type=Filter.StringFilter.MatchType.BEGINS_WITH,
+            ),
+        ),
+    )
+    page_views_metric = [Metric(name='screenPageViews')]
+    page_dims = [Dimension(name='pagePath'), Dimension(name='pageTitle')]
+    order_by_views_desc = [OrderBy(metric=OrderBy.MetricOrderBy(metric_name='screenPageViews'), desc=True)]
+
+    def build_top_notices_req(days: int) -> RunReportRequest:
+        return RunReportRequest(
+            property=property_path,
+            date_ranges=[DateRange(start_date=f'{days}daysAgo', end_date='today')],
+            dimensions=page_dims,
+            metrics=page_views_metric,
+            dimension_filter=notice_filter,
+            order_bys=order_by_views_desc,
+            limit=10,
+        )
+
+    traffic_req = RunReportRequest(
+        property=property_path,
+        date_ranges=[DateRange(start_date='30daysAgo', end_date='today')],
+        dimensions=[Dimension(name='sessionDefaultChannelGroup')],
+        metrics=[Metric(name='sessions')],
+        order_bys=[OrderBy(metric=OrderBy.MetricOrderBy(metric_name='sessions'), desc=True)],
+        limit=10,
+    )
+
+    batch_req = BatchRunReportsRequest(
+        property=property_path,
+        requests=[
+            build_top_notices_req(7),
+            build_top_notices_req(30),
+            traffic_req,
+        ],
+    )
+
+    try:
+        batch_resp = client.batch_run_reports(batch_req)
+    except Exception as e:  # pragma: no cover
+        raise HTTPException(status_code=502, detail=f"GA4 API call failed: {e}")
+
+    def rows_to_pages(report):
+        out = []
+        for row in report.rows:
+            page_path = row.dimension_values[0].value
+            page_title = row.dimension_values[1].value if len(row.dimension_values) > 1 else ''
+            views = int(row.metric_values[0].value) if row.metric_values else 0
+            # Extract notice id from /notice/<id>
+            notice_id = page_path.split('/notice/', 1)[-1].split('/')[0].split('?')[0]
+            out.append({
+                'page_path': page_path,
+                'page_title': page_title,
+                'notice_id': notice_id,
+                'views': views,
+            })
+        return out
+
+    def rows_to_channels(report):
+        out = []
+        for row in report.rows:
+            channel = row.dimension_values[0].value or '(unset)'
+            sessions = int(row.metric_values[0].value) if row.metric_values else 0
+            out.append({'channel': channel, 'sessions': sessions})
+        return out
+
+    top_7d = rows_to_pages(batch_resp.reports[0])
+    top_30d = rows_to_pages(batch_resp.reports[1])
+    channels = rows_to_channels(batch_resp.reports[2])
+
+    # Enrich with notice titles from our own DB (GA pageTitle is often the SEO title which is fine,
+    # but DB title is the canonical short label).
+    all_ids = list({n['notice_id'] for n in (top_7d + top_30d) if n['notice_id']})
+    titles = {}
+    if all_ids:
+        async for n in db.notices.find({'id': {'$in': all_ids}}, {'id': 1, 'title': 1, 'organization': 1}):
+            titles[n['id']] = {'title': n.get('title', ''), 'organization': n.get('organization', '')}
+    for row in top_7d + top_30d:
+        meta = titles.get(row['notice_id'])
+        if meta:
+            row['title'] = meta['title']
+            row['organization'] = meta['organization']
+
+    return {
+        'property_id': GA4_PROPERTY_ID,
+        'top_notices_7d': top_7d,
+        'top_notices_30d': top_30d,
+        'traffic_sources_30d': channels,
+        'totals': {
+            'sessions_30d': sum(c['sessions'] for c in channels),
+            'views_7d': sum(r['views'] for r in top_7d),
+            'views_30d': sum(r['views'] for r in top_30d),
+        },
+    }
 
 
 # -------------------- SEO: SITEMAP + ROBOTS --------------------

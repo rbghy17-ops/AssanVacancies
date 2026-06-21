@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Switch } from '../components/ui/switch';
 import { Badge } from '../components/ui/badge';
-import { LogOut, Plus, Pencil, Trash2, Briefcase, BarChart3, Mail, FileText, Search, Shield, KeyRound, Check, XCircle, Lock, Megaphone } from 'lucide-react';
+import { LogOut, Plus, Pencil, Trash2, Briefcase, BarChart3, Mail, FileText, Search, Shield, KeyRound, Check, XCircle, Lock, Megaphone, LineChart, ExternalLink, TrendingUp } from 'lucide-react';
 import { toast } from '../hooks/use-toast';
 import { DISTRICTS, CATEGORIES, SECTIONS } from '../lib/constants';
 import { computeNoticeStatus } from '../lib/noticeStatus';
@@ -52,6 +52,14 @@ const AdminDashboard = () => {
   const [adsEnabled, setAdsEnabled] = useState(true);
   const [adsDisabledPathsText, setAdsDisabledPathsText] = useState('/privacy\n/terms\n/disclaimer\n/contact');
   const [adsSaving, setAdsSaving] = useState(false);
+  // Search Console verification
+  const [scToken, setScToken] = useState('');
+  const [scSaving, setScSaving] = useState(false);
+  // GA4 analytics widgets
+  const [analytics, setAnalytics] = useState(null);
+  const [analyticsError, setAnalyticsError] = useState('');
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [topWindow, setTopWindow] = useState('7d');
 
   useEffect(() => {
     if (!authLoading) {
@@ -81,8 +89,44 @@ const AdminDashboard = () => {
         const paths = Array.isArray(r.data.disabled_paths) ? r.data.disabled_paths : [];
         setAdsDisabledPathsText(paths.join('\n'));
       }).catch(()=>{});
+      api.get('/site/verification').then(r => {
+        setScToken(r.data?.google_site_verification || '');
+      }).catch(()=>{});
     }
   }, [user]);
+
+  const loadAnalytics = async () => {
+    setAnalyticsLoading(true);
+    setAnalyticsError('');
+    try {
+      const res = await api.get('/admin/analytics/dashboard');
+      setAnalytics(res.data);
+    } catch (e) {
+      const detail = e?.response?.data?.detail || e?.message || 'Failed to load analytics';
+      setAnalyticsError(String(detail));
+      setAnalytics(null);
+    }
+    setAnalyticsLoading(false);
+  };
+
+  // Auto-load analytics once admin is authed (one-shot)
+  useEffect(() => {
+    if (user && !user.must_reset && analytics === null && !analyticsError) {
+      loadAnalytics();
+    }
+    // eslint-disable-next-line
+  }, [user]);
+
+  const saveScToken = async () => {
+    setScSaving(true);
+    try {
+      await api.put('/admin/site/verification', { google_site_verification: scToken.trim() });
+      toast({ title: 'Verification token saved', description: 'Reload the public site to see the meta tag.' });
+    } catch (e) {
+      toast({ title: 'Save failed', description: String(e?.response?.data?.detail || e?.message) });
+    }
+    setScSaving(false);
+  };
 
   const saveAdSettings = async () => {
     setAdsSaving(true);
@@ -293,26 +337,107 @@ const AdminDashboard = () => {
         </TabsContent>
 
         <TabsContent value="analytics" className="mt-4">
-          {stats && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="bg-white rounded-xl border border-purple-100 p-5">
-                <h3 className="font-bold text-purple-900 mb-3">By Type</h3>
-                <div className="space-y-2">
-                  {Object.entries(stats.by_type || {}).map(([k, v]) => (
-                    <Bar key={k} label={TYPES.find(t=>t.key===k)?.label || k.replace('_',' ')} value={v} max={stats.total_notices} />
-                  ))}
-                </div>
+          <div className="space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+              <div>
+                <h3 className="font-bold text-purple-900 flex items-center gap-2"><LineChart className="w-4 h-4" /> Live Analytics (GA4)</h3>
+                <p className="text-xs text-gray-500 mt-0.5">{analytics?.property_id ? `Property ${analytics.property_id}` : 'Google Analytics 4'} — single combined API call</p>
               </div>
-              <div className="bg-white rounded-xl border border-purple-100 p-5">
-                <h3 className="font-bold text-purple-900 mb-3">By Category</h3>
-                <div className="space-y-2">
-                  {Object.entries(stats.by_category || {}).map(([k, v]) => (
-                    <Bar key={k} label={k} value={v} max={stats.total_notices} />
-                  ))}
-                </div>
-              </div>
+              <Button onClick={loadAnalytics} variant="outline" disabled={analyticsLoading} className="border-purple-300">
+                {analyticsLoading ? 'Refreshing...' : 'Refresh'}
+              </Button>
             </div>
-          )}
+
+            {analyticsError && (
+              <div className="bg-amber-50 border border-amber-200 text-amber-900 rounded-lg p-3 text-sm">
+                <strong>Analytics unavailable:</strong> {analyticsError}
+                <div className="text-xs text-amber-800 mt-1">
+                  This is expected on a brand-new GA4 property until data starts flowing — Google typically needs 24–48 hours
+                  to attribute and surface property data.
+                </div>
+              </div>
+            )}
+
+            {analytics && (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {/* Widget 1: Top Viewed Notices */}
+                <div className="bg-white rounded-xl border border-purple-100 p-5">
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="font-bold text-purple-900 flex items-center gap-2"><TrendingUp className="w-4 h-4" /> Top Viewed Notices</h4>
+                    <div className="flex items-center gap-1 bg-purple-100 rounded p-0.5 text-xs">
+                      <button onClick={() => setTopWindow('7d')} className={`px-2 py-0.5 rounded ${topWindow === '7d' ? 'bg-white text-purple-900 shadow-sm font-semibold' : 'text-purple-700'}`}>7 days</button>
+                      <button onClick={() => setTopWindow('30d')} className={`px-2 py-0.5 rounded ${topWindow === '30d' ? 'bg-white text-purple-900 shadow-sm font-semibold' : 'text-purple-700'}`}>30 days</button>
+                    </div>
+                  </div>
+                  <div className="text-xs text-gray-500 mb-3">
+                    Total page views ({topWindow}): <strong className="text-purple-900">{analytics.totals?.[`views_${topWindow}`] ?? 0}</strong>
+                  </div>
+                  <div className="space-y-2">
+                    {(topWindow === '7d' ? analytics.top_notices_7d : analytics.top_notices_30d).map((row, i) => (
+                      <div key={`${row.notice_id}-${i}`} className="flex items-center justify-between gap-2 py-2 border-b border-purple-50 last:border-0">
+                        <div className="min-w-0 flex-1">
+                          <a href={`/notice/${row.notice_id}`} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-purple-800 hover:text-purple-900 line-clamp-1">
+                            {row.title || row.page_title || row.page_path}
+                          </a>
+                          {row.organization && <div className="text-xs text-gray-500 line-clamp-1">{row.organization}</div>}
+                        </div>
+                        <span className="text-sm font-semibold text-purple-900 whitespace-nowrap">{row.views}</span>
+                      </div>
+                    ))}
+                    {(topWindow === '7d' ? analytics.top_notices_7d : analytics.top_notices_30d).length === 0 && (
+                      <div className="text-sm text-gray-500 text-center py-6">No views recorded yet for this window.</div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Widget 2: Traffic Sources */}
+                <div className="bg-white rounded-xl border border-purple-100 p-5">
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="font-bold text-purple-900 flex items-center gap-2"><BarChart3 className="w-4 h-4" /> Traffic Sources</h4>
+                    <span className="text-xs text-gray-500">Last 30 days</span>
+                  </div>
+                  <div className="text-xs text-gray-500 mb-3">
+                    Total sessions: <strong className="text-purple-900">{analytics.totals?.sessions_30d ?? 0}</strong>
+                  </div>
+                  <div className="space-y-2">
+                    {analytics.traffic_sources_30d.map((row) => (
+                      <Bar
+                        key={row.channel}
+                        label={row.channel}
+                        value={row.sessions}
+                        max={analytics.totals?.sessions_30d || 1}
+                      />
+                    ))}
+                    {analytics.traffic_sources_30d.length === 0 && (
+                      <div className="text-sm text-gray-500 text-center py-6">No traffic recorded yet.</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Existing static content breakdown — kept as a quick reference */}
+            {stats && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
+                <div className="bg-white rounded-xl border border-purple-100 p-5">
+                  <h4 className="font-bold text-purple-900 mb-3 text-sm">Content by Type</h4>
+                  <div className="space-y-2">
+                    {Object.entries(stats.by_type || {}).map(([k, v]) => (
+                      <Bar key={k} label={TYPES.find(t=>t.key===k)?.label || k.replace('_',' ')} value={v} max={stats.total_notices} />
+                    ))}
+                  </div>
+                </div>
+                <div className="bg-white rounded-xl border border-purple-100 p-5">
+                  <h4 className="font-bold text-purple-900 mb-3 text-sm">Content by Category</h4>
+                  <div className="space-y-2">
+                    {Object.entries(stats.by_category || {}).map(([k, v]) => (
+                      <Bar key={k} label={k} value={v} max={stats.total_notices} />
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
         </TabsContent>
 
         <TabsContent value="ads" className="mt-4">
@@ -355,6 +480,40 @@ const AdminDashboard = () => {
             <div className="flex justify-end">
               <Button onClick={saveAdSettings} disabled={adsSaving} className="bg-purple-700 hover:bg-purple-800">
                 {adsSaving ? 'Saving...' : 'Save Ad Settings'}
+              </Button>
+            </div>
+          </div>
+
+          {/* Search Console verification token */}
+          <div className="bg-white rounded-xl border border-purple-100 p-5 mt-4 space-y-4">
+            <div>
+              <h3 className="font-semibold text-purple-900 flex items-center gap-2"><Shield className="w-4 h-4" /> Google Search Console Verification</h3>
+              <p className="text-xs text-gray-500 mt-1">
+                Paste the content value from the meta-tag verification method in Search Console. We inject it as{' '}
+                <code className="text-[11px]">&lt;meta name=&quot;google-site-verification&quot; content=&quot;...&quot;&gt;</code>{' '}
+                on every public page.
+              </p>
+            </div>
+            <div>
+              <Label htmlFor="sc-token" className="text-xs">Verification token (content attribute value only)</Label>
+              <Input
+                id="sc-token"
+                value={scToken}
+                onChange={(e) => setScToken(e.target.value)}
+                placeholder="e.g. abcDEF123_xyz...   (NOT the whole meta tag)"
+                className="mt-1 font-mono text-sm"
+              />
+              <div className="mt-1 text-[11px] text-gray-500">
+                Find it in Search Console → Settings → Ownership verification → HTML tag → copy the value inside{' '}
+                <code>content=&quot;…&quot;</code>.
+              </div>
+            </div>
+            <div className="rounded-lg border border-purple-100 bg-purple-50 p-3 text-xs text-purple-900">
+              <strong>After saving:</strong> the meta tag will appear in <code>&lt;head&gt;</code> within a few seconds on every public page. Then go back to Search Console and click <em>Verify</em>. Then submit the sitemap URL <code>/api/sitemap.xml</code> in Search Console &rarr; Sitemaps.
+            </div>
+            <div className="flex justify-end">
+              <Button onClick={saveScToken} disabled={scSaving} className="bg-purple-700 hover:bg-purple-800">
+                {scSaving ? 'Saving...' : 'Save Verification Token'}
               </Button>
             </div>
           </div>

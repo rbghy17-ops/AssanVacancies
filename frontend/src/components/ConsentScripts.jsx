@@ -9,7 +9,7 @@ import { CONSENT_EVENT, hasConsented } from '../lib/consent';
  * AdSense Publisher ID when going to production. Until they're real, the
  * scripts won't fire (the guards block placeholder values).
  */
-const GA_MEASUREMENT_ID = 'G-XXXXXXXXXX';                      // e.g., 'G-ABCD12345'
+const GA_MEASUREMENT_ID = 'G-FE564JMZFY';                      // AssamVacancies.com GA4 property
 const ADSENSE_CLIENT_ID = 'ca-pub-XXXXXXXXXXXXXXXX';           // e.g., 'ca-pub-1234567890123456'
 const MANAGED_ATTR = 'data-av-managed';
 

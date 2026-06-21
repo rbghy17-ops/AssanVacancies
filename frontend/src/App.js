@@ -17,6 +17,7 @@ import AdminLogin from './pages/AdminLogin';
 import AdminDashboard from './pages/AdminDashboard';
 import CookieConsent from './components/CookieConsent';
 import ConsentScripts from './components/ConsentScripts';
+import SiteVerification from './components/SiteVerification';
 import AdSlot from './components/AdSlot';
 import { Toaster } from './components/ui/toaster';
 
@@ -74,6 +75,7 @@ function App() {
           </Layout>
           <CookieConsent />
           <ConsentScripts />
+          <SiteVerification />
           <Toaster />
         </BrowserRouter>
       </AdSettingsProvider>
