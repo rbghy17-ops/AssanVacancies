@@ -34,7 +34,7 @@ mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
-JWT_SECRET = os.environ.get('JWT_SECRET', 'assamvacancies-secret-key-2025-change-me')
+JWT_SECRET = os.environ['JWT_SECRET']
 JWT_ALGO = 'HS256'
 TOKEN_TTL_MIN = 30
 MAX_FAILED_ATTEMPTS = 5
@@ -192,8 +192,12 @@ class AggregatorSettings(BaseModel):
 
 DEFAULT_DISABLED_AD_PATHS = ['/privacy', '/terms', '/disclaimer', '/contact']
 
-# GA4 Data API configuration
+# GA4 Data API configuration.
+# Credentials can be supplied either as inline JSON via GA4_CREDENTIALS_JSON
+# (preferred for containerised deployment) or as a filesystem path via
+# GA4_CREDENTIALS_PATH (legacy / local dev).
 GA4_PROPERTY_ID = os.environ.get('GA4_PROPERTY_ID', '')
+GA4_CREDENTIALS_JSON = os.environ.get('GA4_CREDENTIALS_JSON', '')
 GA4_CREDENTIALS_PATH = os.environ.get('GA4_CREDENTIALS_PATH', '')
 
 _ga4_client = None
@@ -202,15 +206,23 @@ def get_ga4_client():
     global _ga4_client
     if _ga4_client is not None:
         return _ga4_client
-    if not GA4_PROPERTY_ID or not GA4_CREDENTIALS_PATH or not os.path.exists(GA4_CREDENTIALS_PATH):
+    if not GA4_PROPERTY_ID:
         return None
     try:
         from google.analytics.data_v1beta import BetaAnalyticsDataClient  # noqa: WPS433
         from google.oauth2 import service_account  # noqa: WPS433
-        creds = service_account.Credentials.from_service_account_file(
-            GA4_CREDENTIALS_PATH,
-            scopes=['https://www.googleapis.com/auth/analytics.readonly'],
-        )
+        scopes = ['https://www.googleapis.com/auth/analytics.readonly']
+        if GA4_CREDENTIALS_JSON:
+            import json as _json  # noqa: WPS433
+            creds = service_account.Credentials.from_service_account_info(
+                _json.loads(GA4_CREDENTIALS_JSON), scopes=scopes,
+            )
+        elif GA4_CREDENTIALS_PATH and os.path.exists(GA4_CREDENTIALS_PATH):
+            creds = service_account.Credentials.from_service_account_file(
+                GA4_CREDENTIALS_PATH, scopes=scopes,
+            )
+        else:
+            return None
         _ga4_client = BetaAnalyticsDataClient(credentials=creds)
         return _ga4_client
     except Exception as e:  # pragma: no cover
