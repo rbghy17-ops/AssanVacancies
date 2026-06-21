@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { fetchNotice } from '../lib/api';
 import Sidebar from '../components/Sidebar';
-import AdBanner from '../components/AdBanner';
+import AdSlot from '../components/AdSlot';
 import SeoMeta from '../components/SeoMeta';
 import NoticeStatusBadges from '../components/NoticeStatusBadges';
 import { computeNoticeStatus } from '../lib/noticeStatus';
@@ -132,7 +132,7 @@ const NoticeDetail = () => {
                 </section>
               )}
 
-              <AdBanner size="medium" />
+              <AdSlot placement="in-content" />
 
               <section>
                 <h2 className="text-lg font-bold text-purple-900 mb-3">Important Links</h2>

@@ -3,7 +3,7 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { fetchNotices } from '../lib/api';
 import NoticeCard from '../components/NoticeCard';
 import Sidebar from '../components/Sidebar';
-import AdBanner from '../components/AdBanner';
+import AdSlot from '../components/AdSlot';
 import SeoMeta from '../components/SeoMeta';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Button } from '../components/ui/button';
@@ -119,7 +119,7 @@ const ListPage = ({ noticeType }) => {
             notices.map((n, idx) => (
               <React.Fragment key={n.id}>
                 <NoticeCard notice={n} />
-                {idx === 3 && <AdBanner size="medium" />}
+                {(idx + 1) % 5 === 0 && idx < notices.length - 1 && <AdSlot placement="in-content" />}
               </React.Fragment>
             ))
           )}

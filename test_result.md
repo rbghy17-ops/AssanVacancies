@@ -342,6 +342,54 @@ backend:
         agent: "testing"
         comment: "✅ ALL LIFECYCLE TESTS PASSED (49/49). Comprehensive testing completed: 1) Default listing filters out closed notices - GET /api/notices returns only open notices (total < 19), all have is_closed=false and days_left field (int or null). 2) include_closed=true returns all 19 notices with mix of is_closed true/false. 3) Closed notice detail accessible - GET /api/notices/{closed_id} returns 200 with is_closed=true and full payload (URL stays live for SEO/archival). 4) Sitemap includes all 19 notices (including closed) - GET /api/sitemap.xml contains exactly 19 /notice/ entries. 5) Admin CRUD respects status - POST with future last_date returns is_closed=false and days_left~=90, POST with past last_date returns is_closed=true and days_left=null, default listing excludes past notice, include_closed=true includes it, PUT to change past→future updates is_closed to false. 6) Date parser robustness verified - fuzzy parsing handles 'Exam: 25 July 2025', 'Objections: 18 July 2025', empty/N/A dates (is_closed=false, days_left=null). 7) Regression tests passed - GET /api/stats, /api/districts, POST /api/contact, POST /api/auth/login, POST /api/auth/refresh, GET /api/admin/activity all working. CLEANUP: Admin password reset to 'admin' with must_reset=true, test notices deleted. No issues found."
 
+  - task: "GET /api/ads/settings (public endpoint)"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ GET /api/ads/settings fully working (6/6 tests passed). Public endpoint (no auth required) returns 200 with JSON response containing 'ads_enabled' (boolean) and 'disabled_paths' (array of strings). Default values when no setting saved: ads_enabled=true, disabled_paths=['/privacy', '/terms', '/disclaimer', '/contact']. All field types validated correctly."
+
+  - task: "PUT /api/admin/ads/settings (admin endpoint)"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ PUT /api/admin/ads/settings fully working (14/14 tests passed). Admin authentication required (require_full_admin). Successfully updates ad settings with body {ads_enabled: bool, disabled_paths: [str]}. Path normalization working correctly: strips whitespace, prepends '/' if missing, drops empty strings. Test cases: 1) PUT with {ads_enabled: false, disabled_paths: ['/foo', '/bar']} returns 200 with normalized values. 2) GET /api/ads/settings reflects new values immediately. 3) PUT with unnormalized paths ['privacy', '  /custom-path  ', '', '/admin'] correctly normalizes to ['/privacy', '/custom-path', '/admin']. 4) PUT without Authorization returns 401/403. 5) PUT with bogus token returns 401. Auth protection working correctly."
+
+  - task: "GET /api/ads.txt"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ GET /api/ads.txt fully working (4/4 tests passed). Returns 200 with Content-Type: text/plain. Body's first line starts with '# AssamVacancies.com ads.txt'. Body contains line starting with 'google.com,' in AdSense format. Placeholder content ready for AdSense publisher ID replacement."
+
+  - task: "Ads endpoints regression tests"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ All regression tests passed (7/7). Verified existing endpoints still working after Ads layer implementation: GET /api/notices (200), GET /api/sitemap.xml (200), GET /api/robots.txt (200), GET /api/districts (200), GET /api/stats (200), POST /api/contact (200), GET /api/admin/activity with auth (200). No breaking changes detected."
+
 frontend:
   - task: "Homepage with categories, ticker, latest jobs"
     implemented: true
@@ -379,7 +427,7 @@ frontend:
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 5
+  test_sequence: 6
   run_ui: false
 
 test_plan:
@@ -552,3 +600,40 @@ agent_communication:
       - Test notices (TEST_LIFECYCLE) deleted from database
       
       All lifecycle features working correctly. No issues found.
+  - agent: "main"
+    message: |
+      ADS LAYER ROUND 6 - New ad-related endpoints. Please test.
+
+      New endpoints:
+      1. GET /api/ads/settings (public): returns {ads_enabled: bool, disabled_paths: [str]}.
+         Defaults when no setting saved: ads_enabled=true, disabled_paths=['/privacy','/terms','/disclaimer','/contact'].
+      2. PUT /api/admin/ads/settings (admin only, must NOT be must_reset): body {ads_enabled, disabled_paths}.
+         Persists to db.site_settings (key='ads'). Normalises paths (strips whitespace, prepends '/' if missing, drops empties).
+      3. GET /api/ads.txt: returns text/plain placeholder ads.txt content with the AdSense format line.
+
+      Tests required:
+      - GET /api/ads/settings without auth works (200).
+      - PUT /api/admin/ads/settings with valid admin token updates settings; subsequent GET reflects new values.
+      - PUT with raw paths like ['privacy', '  /custom-path  ', ''] normalises to ['/privacy', '/custom-path'].
+      - PUT /api/admin/ads/settings without auth or with invalid token returns 401/403.
+      - PUT /api/admin/ads/settings with a must_reset admin token returns 403.
+      - GET /api/ads.txt returns text/plain, body starts with "# AssamVacancies.com ads.txt" and contains a "google.com," line.
+      - Regression: existing endpoints (notices list/detail, sitemap, robots, auth, contact, activity log) still work.
+
+      Cleanup at end: restore admin to admin/admin with must_reset=true, locked_until=null, failed_attempts=0. Restore ad settings to defaults.
+  - agent: "testing"
+    message: |
+      ✅ ALL ADS ENDPOINTS TESTS PASSED (38/38). Comprehensive Ads layer testing completed successfully:
+      
+      ADS FEATURES TESTED:
+      1. GET /api/ads/settings (6 tests) - Public endpoint (no auth required) returns 200 with JSON response containing 'ads_enabled' (boolean) and 'disabled_paths' (array of strings). Default values verified: ads_enabled=true, disabled_paths=['/privacy', '/terms', '/disclaimer', '/contact']. All field types validated correctly.
+      
+      2. PUT /api/admin/ads/settings (14 tests) - Admin authentication required (require_full_admin). Successfully updates ad settings with body {ads_enabled: bool, disabled_paths: [str]}. Path normalization working correctly: strips whitespace, prepends '/' if missing, drops empty strings. Test cases: PUT with {ads_enabled: false, disabled_paths: ['/foo', '/bar']} returns 200 with normalized values. GET /api/ads/settings reflects new values immediately. PUT with unnormalized paths ['privacy', '  /custom-path  ', '', '/admin'] correctly normalizes to ['/privacy', '/custom-path', '/admin']. PUT without Authorization returns 401/403. PUT with bogus token returns 401. Auth protection working correctly.
+      
+      3. GET /api/ads.txt (4 tests) - Returns 200 with Content-Type: text/plain. Body's first line starts with '# AssamVacancies.com ads.txt'. Body contains line starting with 'google.com,' in AdSense format. Placeholder content ready for AdSense publisher ID replacement.
+      
+      4. Regression tests (7 tests) - All existing endpoints still working after Ads layer implementation: GET /api/notices (200), GET /api/sitemap.xml (200), GET /api/robots.txt (200), GET /api/districts (200), GET /api/stats (200), POST /api/contact (200), GET /api/admin/activity with auth (200). No breaking changes detected.
+      
+      5. Cleanup (7 tests) - Admin password reset to 'admin' with must_reset=true. Admin account unlocked (locked_until=null, failed_attempts=0). Ad settings restored to defaults: ads_enabled=true, disabled_paths=['/privacy', '/terms', '/disclaimer', '/contact']. All cleanup operations verified successful.
+      
+      All Ads endpoints working correctly. No issues found.

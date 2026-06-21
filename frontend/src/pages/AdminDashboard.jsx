@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { fetchNotices, fetchStats, createNotice, updateNotice, deleteNotice, listContacts, deleteContact, fetchActivity, changePassword } from '../lib/api';
+import api from '../lib/api';
+import { useAdSettings } from '../context/AdSettingsContext';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Textarea } from '../components/ui/textarea';
@@ -11,7 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Switch } from '../components/ui/switch';
 import { Badge } from '../components/ui/badge';
-import { LogOut, Plus, Pencil, Trash2, Briefcase, BarChart3, Mail, FileText, Search, Shield, KeyRound, Check, XCircle, Lock } from 'lucide-react';
+import { LogOut, Plus, Pencil, Trash2, Briefcase, BarChart3, Mail, FileText, Search, Shield, KeyRound, Check, XCircle, Lock, Megaphone } from 'lucide-react';
 import { toast } from '../hooks/use-toast';
 import { DISTRICTS, CATEGORIES, SECTIONS } from '../lib/constants';
 import { computeNoticeStatus } from '../lib/noticeStatus';
@@ -45,6 +47,11 @@ const AdminDashboard = () => {
   const [pwdOpen, setPwdOpen] = useState(false);
   const [pwdForm, setPwdForm] = useState({ old: '', new1: '', new2: '' });
   const [pwdErr, setPwdErr] = useState('');
+  // Ad settings
+  const adSettingsCtx = useAdSettings();
+  const [adsEnabled, setAdsEnabled] = useState(true);
+  const [adsDisabledPathsText, setAdsDisabledPathsText] = useState('/privacy\n/terms\n/disclaimer\n/contact');
+  const [adsSaving, setAdsSaving] = useState(false);
 
   useEffect(() => {
     if (!authLoading) {
@@ -65,6 +72,36 @@ const AdminDashboard = () => {
   };
 
   useEffect(() => { if (user && !user.must_reset) refresh(); /* eslint-disable-next-line */ }, [user]);
+
+  // Load ad settings once admin is authed
+  useEffect(() => {
+    if (user && !user.must_reset) {
+      api.get('/ads/settings').then(r => {
+        setAdsEnabled(r.data.ads_enabled !== false);
+        const paths = Array.isArray(r.data.disabled_paths) ? r.data.disabled_paths : [];
+        setAdsDisabledPathsText(paths.join('\n'));
+      }).catch(()=>{});
+    }
+  }, [user]);
+
+  const saveAdSettings = async () => {
+    setAdsSaving(true);
+    const paths = adsDisabledPathsText
+      .split('\n')
+      .map(p => p.trim())
+      .filter(Boolean);
+    try {
+      await api.put('/admin/ads/settings', {
+        ads_enabled: adsEnabled,
+        disabled_paths: paths,
+      });
+      toast({ title: 'Ad settings saved' });
+      adSettingsCtx.refresh();
+    } catch (e) {
+      toast({ title: 'Save failed', description: String(e?.response?.data?.detail || e?.message) });
+    }
+    setAdsSaving(false);
+  };
   useEffect(() => {
     if (user && !user.must_reset) {
       const t = setTimeout(() => {
@@ -168,6 +205,7 @@ const AdminDashboard = () => {
           <TabsTrigger value="notices">Notices</TabsTrigger>
           <TabsTrigger value="messages">Messages</TabsTrigger>
           <TabsTrigger value="analytics">Analytics</TabsTrigger>
+          <TabsTrigger value="ads"><Megaphone className="w-3.5 h-3.5 mr-1" /> Ads</TabsTrigger>
           <TabsTrigger value="activity"><Shield className="w-3.5 h-3.5 mr-1" /> Activity Log</TabsTrigger>
         </TabsList>
 
@@ -275,6 +313,51 @@ const AdminDashboard = () => {
               </div>
             </div>
           )}
+        </TabsContent>
+
+        <TabsContent value="ads" className="mt-4">
+          <div className="bg-white rounded-xl border border-purple-100 p-5 space-y-5">
+            <div>
+              <h3 className="font-semibold text-purple-900 flex items-center gap-2"><Megaphone className="w-4 h-4" /> Ad Settings</h3>
+              <p className="text-xs text-gray-500 mt-1">Control where AdSense placeholders render across the public site. Admin routes (/admin/*) are always ad-free.</p>
+            </div>
+
+            <div className="flex items-center justify-between p-4 bg-purple-50 border border-purple-100 rounded-lg">
+              <div>
+                <Label htmlFor="ads-toggle" className="text-sm font-semibold text-purple-900">Enable ads site-wide</Label>
+                <p className="text-xs text-gray-600 mt-0.5">Master switch. When off, no AdSlot renders anywhere on the site.</p>
+              </div>
+              <Switch id="ads-toggle" checked={adsEnabled} onCheckedChange={setAdsEnabled} />
+            </div>
+
+            <div>
+              <Label htmlFor="ads-paths" className="text-sm font-semibold text-purple-900">Disable ads on these paths</Label>
+              <p className="text-xs text-gray-600 mt-0.5 mb-2">One path per line. Matches the path exactly or any sub-path (e.g. <code>/privacy</code> covers <code>/privacy</code> and <code>/privacy/anything</code>).</p>
+              <Textarea
+                id="ads-paths"
+                rows={6}
+                value={adsDisabledPathsText}
+                onChange={(e) => setAdsDisabledPathsText(e.target.value)}
+                className="font-mono text-sm"
+                placeholder="/privacy&#10;/terms&#10;/disclaimer"
+              />
+              <div className="mt-2 text-xs text-gray-500">
+                Defaults exclude the legal pages and contact form. Add or remove paths as needed.
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+              <strong>Note:</strong> Real AdSense scripts only load after a visitor accepts cookies AND the publisher ID is set
+              in <code>ConsentScripts.jsx</code>. Until then, AdSlot renders a labelled placeholder. Apply for AdSense approval
+              once the site has substantial original content.
+            </div>
+
+            <div className="flex justify-end">
+              <Button onClick={saveAdSettings} disabled={adsSaving} className="bg-purple-700 hover:bg-purple-800">
+                {adsSaving ? 'Saving...' : 'Save Ad Settings'}
+              </Button>
+            </div>
+          </div>
         </TabsContent>
 
         <TabsContent value="activity" className="mt-4">

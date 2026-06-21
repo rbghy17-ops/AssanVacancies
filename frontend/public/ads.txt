@@ -1,0 +1,5 @@
+# AssamVacancies.com ads.txt
+# Replace the placeholder publisher ID below with your real Google AdSense publisher ID
+# once the AdSense account has been approved.
+# Format: <domain>, <publisher-id>, <account-type>, <certification-authority-id>
+google.com, pub-XXXXXXXXXXXXXXXX, DIRECT, f08c47fec0942fa0

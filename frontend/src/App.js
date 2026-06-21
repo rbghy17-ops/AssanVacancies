@@ -2,6 +2,7 @@ import React from 'react';
 import './App.css';
 import { BrowserRouter, Routes, Route, useLocation, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
+import { AdSettingsProvider } from './context/AdSettingsContext';
 import Header from './components/Header';
 import Footer from './components/Footer';
 import Home from './pages/Home';
@@ -16,6 +17,7 @@ import AdminLogin from './pages/AdminLogin';
 import AdminDashboard from './pages/AdminDashboard';
 import CookieConsent from './components/CookieConsent';
 import ConsentScripts from './components/ConsentScripts';
+import AdSlot from './components/AdSlot';
 import { Toaster } from './components/ui/toaster';
 
 const Layout = ({ children }) => {
@@ -34,6 +36,7 @@ const Layout = ({ children }) => {
       )}
       <main className="min-h-[60vh]">{children}</main>
       {!isAdmin && <Footer />}
+      {!isAdmin && <AdSlot placement="mobile-sticky" />}
     </div>
   );
 };
@@ -41,37 +44,39 @@ const Layout = ({ children }) => {
 function App() {
   return (
     <AuthProvider>
-      <BrowserRouter>
-        <Layout>
-          <Routes>
-            <Route path="/" element={<Home />} />
-            {/* Public-facing sections — distinct paths, single underlying ListPage */}
-            <Route path="/jobs" element={<ListPage noticeType="job" />} />
-            <Route path="/admit-card" element={<ListPage noticeType="admit_card" />} />
-            <Route path="/result" element={<ListPage noticeType="result" />} />
-            <Route path="/answer-key" element={<ListPage noticeType="answer_key" />} />
-            {/* Detail page */}
-            <Route path="/notice/:id" element={<NoticeDetail />} />
-            {/* Backward-compat redirects */}
-            <Route path="/job/:id" element={<Navigate to="/notice/:id" replace />} />
-            <Route path="/category/:category" element={<ListPage noticeType="job" />} />
-            <Route path="/type/:type" element={<ListPage />} />
-            <Route path="/search" element={<ListPage />} />
-            <Route path="/contact" element={<Contact />} />
-            <Route path="/about" element={<About />} />
-            <Route path="/privacy" element={<PrivacyPolicy />} />
-            <Route path="/privacy-policy" element={<Navigate to="/privacy" replace />} />
-            <Route path="/terms" element={<TermsConditions />} />
-            <Route path="/terms-conditions" element={<Navigate to="/terms" replace />} />
-            <Route path="/disclaimer" element={<Disclaimer />} />
-            <Route path="/admin/login" element={<AdminLogin />} />
-            <Route path="/admin" element={<AdminDashboard />} />
-          </Routes>
-        </Layout>
-        <CookieConsent />
-        <ConsentScripts />
-        <Toaster />
-      </BrowserRouter>
+      <AdSettingsProvider>
+        <BrowserRouter>
+          <Layout>
+            <Routes>
+              <Route path="/" element={<Home />} />
+              {/* Public-facing sections — distinct paths, single underlying ListPage */}
+              <Route path="/jobs" element={<ListPage noticeType="job" />} />
+              <Route path="/admit-card" element={<ListPage noticeType="admit_card" />} />
+              <Route path="/result" element={<ListPage noticeType="result" />} />
+              <Route path="/answer-key" element={<ListPage noticeType="answer_key" />} />
+              {/* Detail page */}
+              <Route path="/notice/:id" element={<NoticeDetail />} />
+              {/* Backward-compat redirects */}
+              <Route path="/job/:id" element={<Navigate to="/notice/:id" replace />} />
+              <Route path="/category/:category" element={<ListPage noticeType="job" />} />
+              <Route path="/type/:type" element={<ListPage />} />
+              <Route path="/search" element={<ListPage />} />
+              <Route path="/contact" element={<Contact />} />
+              <Route path="/about" element={<About />} />
+              <Route path="/privacy" element={<PrivacyPolicy />} />
+              <Route path="/privacy-policy" element={<Navigate to="/privacy" replace />} />
+              <Route path="/terms" element={<TermsConditions />} />
+              <Route path="/terms-conditions" element={<Navigate to="/terms" replace />} />
+              <Route path="/disclaimer" element={<Disclaimer />} />
+              <Route path="/admin/login" element={<AdminLogin />} />
+              <Route path="/admin" element={<AdminDashboard />} />
+            </Routes>
+          </Layout>
+          <CookieConsent />
+          <ConsentScripts />
+          <Toaster />
+        </BrowserRouter>
+      </AdSettingsProvider>
     </AuthProvider>
   );
 }

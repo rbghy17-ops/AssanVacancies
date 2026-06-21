@@ -140,6 +140,14 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class AdSettings(BaseModel):
+    ads_enabled: bool = True
+    disabled_paths: List[str] = []
+
+
+DEFAULT_DISABLED_AD_PATHS = ['/privacy', '/terms', '/disclaimer', '/contact']
+
+
 class PasswordChangeRequest(BaseModel):
     old_password: str
     new_password: str
@@ -551,6 +559,50 @@ async def get_activity(limit: int = 100, admin=Depends(require_full_admin)):
 @api_router.get("/")
 async def root():
     return {'message': 'AssamVacancies API'}
+
+
+# -------------------- ADS: SETTINGS + ads.txt --------------------
+@api_router.get("/ads/settings")
+async def get_ad_settings():
+    """Public: lets frontend decide whether to render AdSlot placeholders."""
+    doc = await db.site_settings.find_one({'_key': 'ads'})
+    if not doc:
+        return {'ads_enabled': True, 'disabled_paths': list(DEFAULT_DISABLED_AD_PATHS)}
+    return {
+        'ads_enabled': doc.get('ads_enabled', True),
+        'disabled_paths': doc.get('disabled_paths', list(DEFAULT_DISABLED_AD_PATHS)),
+    }
+
+
+@api_router.put("/admin/ads/settings")
+async def update_ad_settings(settings: AdSettings, admin=Depends(require_full_admin)):
+    # Normalise paths: strip whitespace, ensure leading slash, drop empties
+    paths = []
+    for p in settings.disabled_paths:
+        p = (p or '').strip()
+        if not p:
+            continue
+        if not p.startswith('/'):
+            p = '/' + p
+        paths.append(p)
+    payload = {'ads_enabled': settings.ads_enabled, 'disabled_paths': paths}
+    await db.site_settings.update_one(
+        {'_key': 'ads'}, {'$set': {'_key': 'ads', **payload}}, upsert=True,
+    )
+    return payload
+
+
+@api_router.get("/ads.txt", response_class=Response)
+async def ads_txt():
+    """Served from /api/ads.txt; the canonical /ads.txt is also served as a static file by the frontend."""
+    body = (
+        "# AssamVacancies.com ads.txt\n"
+        "# Replace the placeholder publisher ID below with your real Google AdSense publisher ID\n"
+        "# once the AdSense account has been approved.\n"
+        "# Format: <domain>, <publisher-id>, <account-type>, <certification-authority-id>\n"
+        "google.com, pub-XXXXXXXXXXXXXXXX, DIRECT, f08c47fec0942fa0\n"
+    )
+    return Response(body, media_type='text/plain')
 
 
 # -------------------- SEO: SITEMAP + ROBOTS --------------------

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Facebook, Twitter, Send, Youtube, TrendingUp, Award, Bell } from 'lucide-react';
 import { fetchNotices } from '../lib/api';
-import AdBanner from './AdBanner';
+import AdSlot from './AdSlot';
 
 const Sidebar = () => {
   const [latest, setLatest] = useState([]);
@@ -37,7 +37,9 @@ const Sidebar = () => {
         </ul>
       </div>
 
-      <AdBanner size="large" />
+      <div className="hidden lg:block">
+        <AdSlot placement="sidebar" />
+      </div>
 
       <div className="bg-white rounded-xl border border-purple-100 overflow-hidden">
         <div className="assam-gradient text-white px-4 py-3 font-bold flex items-center gap-2"><Bell className="w-4 h-4" /> Recent Results</div>

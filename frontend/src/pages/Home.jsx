@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { fetchNotices, fetchStats } from '../lib/api';
 import NoticeCard from '../components/NoticeCard';
 import Sidebar from '../components/Sidebar';
-import AdBanner from '../components/AdBanner';
+import AdSlot from '../components/AdSlot';
 import SeoMeta from '../components/SeoMeta';
 import { Shield, Building2, Train, Landmark, GraduationCap, Briefcase, BookOpen, Award, ChevronRight, FileCheck } from 'lucide-react';
 import { SECTIONS } from '../lib/constants';
@@ -48,6 +48,10 @@ const Home = () => {
   return (
     <div>
       <SeoMeta />
+      {/* Header ad placement: top of homepage above hero */}
+      <div className="max-w-7xl mx-auto px-4 pt-4">
+        <AdSlot placement="header" />
+      </div>
       <section className="assam-gradient text-white">
         <div className="max-w-7xl mx-auto px-4 py-10 md:py-14">
           <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
@@ -123,7 +127,7 @@ const Home = () => {
             </div>
           </div>
 
-          <AdBanner size="wide" />
+          <AdSlot placement="in-content" />
 
           <div className="flex items-center justify-between mt-4">
             <h2 className="text-xl font-bold text-purple-900 title-font">Latest Jobs</h2>
@@ -137,7 +141,7 @@ const Home = () => {
               {jobs.map((j, idx) => (
                 <React.Fragment key={j.id}>
                   <NoticeCard notice={j} />
-                  {idx === 3 && <AdBanner size="medium" label="Sponsored" />}
+                  {(idx + 1) % 5 === 0 && idx < jobs.length - 1 && <AdSlot placement="in-content" />}
                 </React.Fragment>
               ))}
             </div>
