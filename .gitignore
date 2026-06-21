@@ -84,3 +84,6 @@ credentials.json
 *.key
 .credentials
 ga4-service-account.json
+.env
+.env.*
+*.env
